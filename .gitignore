@@ -1,0 +1,32 @@
+# Segredos — NUNCA versionar
+.env
+.env.*
+secrets/
+*.pem
+*.key
+
+# Build / deps
+node_modules/
+dist/
+
+# Logs e temporários
+*.log
+fallback-ctx.json
+.DS_Store
+
+# Data mirror (LLM-Brain + DataLake sync)
+data/
+
+# Extras (repo próprio agents-handoff)
+frontend/node_modules/
+frontend/dist/
+frontend_backup/
+.claude/
+.data/
+.tmp.driveupload/
+cloudflared/
+traefik/
+scripts/.anythingllm-state.json
+handoff painel-handoff/
+nul
+*.png

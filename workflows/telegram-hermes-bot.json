@@ -1,0 +1,197 @@
+{
+  "name": "Telegram Bot Hermes",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-hermes",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "telegram-hermes-webhook-id",
+      "id": "4ca87075-686e-4023-99a7-6707697ffb07"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst body = $json.body;\nif (!body || !body.message) return [];\nconst chat_id = body.message.chat.id;\nconst text = body.message.text || \"\";\nreturn { chat_id, text, thread_slug: \"telegram-\" + chat_id };\n          "
+      },
+      "name": "Code Extrair",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        0
+      ],
+      "id": "5fb57d75-8fb6-446a-98b9-a8de47798b80"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3001/api/v1/workspace/assistant-chats/thread/new",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 102690b5bbf837674c99356880aa456c7bccc7ce38f99ca5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { userId: null, name: $('Code Extrair').item.json.thread_slug, slug: $('Code Extrair').item.json.thread_slug } }}",
+        "options": {
+          "allowUnauthorizedCerts": true,
+          "response": {
+            "response": {
+              "ignoreResponseCode": true
+            }
+          }
+        }
+      },
+      "name": "Create Thread",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        400,
+        0
+      ],
+      "id": "f927ef97-fe09-4e84-b1e4-c57dd2ac7b61"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:3001/api/v1/workspace/assistant-chats/thread/{{ $('Code Extrair').item.json.thread_slug }}/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 102690b5bbf837674c99356880aa456c7bccc7ce38f99ca5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { message: $('Code Extrair').item.json.text, mode: \"chat\" } }}",
+        "options": {}
+      },
+      "name": "AnythingLLM Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        600,
+        0
+      ],
+      "id": "58a0fc68-ed11-4dd7-97de-9e1670b9b31c"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8611200275:AAGJ7uD3_iV1Cc5bW77P4SWgZfGH-VYnF2k/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $('Code Extrair').item.json.chat_id, text: $json.textResponse || $json.textResponse === \"\" ? $json.textResponse : JSON.stringify($json) } }}",
+        "options": {}
+      },
+      "name": "Responder Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        800,
+        0
+      ],
+      "id": "f1cc2d91-3ba2-470b-ba03-566df6cd6dd3"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code Extrair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Extrair": {
+      "main": [
+        [
+          {
+            "node": "Create Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Thread": {
+      "main": [
+        [
+          {
+            "node": "AnythingLLM Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AnythingLLM Chat": {
+      "main": [
+        [
+          {
+            "node": "Responder Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "active": false,
+  "versionId": "8fd7f722-d541-4046-bb5f-3a7f1dc0bf9f",
+  "id": "pRZUV1Xlf3IAGofq",
+  "description": null,
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "activeVersionId": null,
+  "updatedAt": "2026-06-23T11:31:57.690Z",
+  "createdAt": "2026-06-23T11:31:57.690Z",
+  "isArchived": false,
+  "versionCounter": 1,
+  "triggerCount": 0
+}

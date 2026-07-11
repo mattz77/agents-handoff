@@ -1,0 +1,158 @@
+{
+  "name": "Bidirectional Fallback Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "handoff-chat",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{$json.body.preferred_model}}",
+        "rules": {
+          "rules": [
+            { "value2": "gemini", "output": 0 },
+            { "value2": "claude", "output": 1 }
+          ]
+        }
+      },
+      "name": "Switch Model",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key={{GEMINI_API_KEY}}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "contents", "value": "={{$json.body.messages}}" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Gemini Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [500, 150],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "{{ANTHROPIC_API_KEY}}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "claude-3-5-sonnet-20240620" },
+            { "name": "messages", "value": "={{$json.body.messages}}" },
+            { "name": "max_tokens", "value": "4000" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Claude Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [500, 450],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.error ? true : false}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "name": "Check Gemini Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [750, 150]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.error ? true : false}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "name": "Check Claude Error",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [750, 450]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {}
+      },
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [ { "node": "Switch Model", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Switch Model": {
+      "main": [
+        [ { "node": "Gemini Request", "type": "main", "index": 0 } ],
+        [ { "node": "Claude Request", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Gemini Request": {
+      "main": [
+        [ { "node": "Check Gemini Error", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Claude Request": {
+      "main": [
+        [ { "node": "Check Claude Error", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Check Gemini Error": {
+      "main": [
+        [ { "node": "Claude Request", "type": "main", "index": 0 } ],
+        [ { "node": "Respond to Webhook", "type": "main", "index": 0 } ]
+      ]
+    },
+    "Check Claude Error": {
+      "main": [
+        [ { "node": "Gemini Request", "type": "main", "index": 0 } ],
+        [ { "node": "Respond to Webhook", "type": "main", "index": 0 } ]
+      ]
+    }
+  },
+  "settings": {}
+}

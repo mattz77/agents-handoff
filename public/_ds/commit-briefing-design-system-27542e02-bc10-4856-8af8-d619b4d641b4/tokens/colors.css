@@ -1,0 +1,98 @@
+/* ============================================================
+   Commit Briefing — Color tokens
+   Tech / Hacker palette (Zinc & Emerald)
+   High contrast, dense, dark mode native.
+   ============================================================ */
+
+:root, .dark {
+  /* ---- Base ramp: Zinc (Tech Dark) ---- */
+  --zinc-50:  #fafafa;
+  --zinc-100: #f4f4f5;
+  --zinc-200: #e4e4e7;
+  --zinc-300: #d4d4d8;
+  --zinc-400: #a1a1aa;
+  --zinc-500: #71717a;
+  --zinc-600: #52525b;
+  --zinc-700: #3f3f46;
+  --zinc-800: #27272a;
+  --zinc-900: #18181b;
+  --zinc-950: #09090b;
+
+  /* ---- Brand: Emerald (Ops / System) ---- */
+  --emerald-400: #34d399;
+  --emerald-500: #10b981;
+  --emerald-600: #059669;
+
+  /* ---- Semantic status ---- */
+  --good:         #10b981;  
+  --good-fg:      #34d399;
+  --warning:      #f59e0b;
+  --critical:     #ef4444;  
+  --critical-700: #b91c1c;  
+  --toil:         #f97316;  
+  --info:         #3b82f6;  
+
+  /* ============================================================
+     SEMANTIC ALIASES
+     ============================================================ */
+  --background: var(--zinc-950);
+  --foreground: var(--zinc-100);
+  
+  --card: var(--zinc-900);
+  --card-foreground: var(--zinc-100);
+  
+  --popover: var(--zinc-900);
+  --popover-foreground: var(--zinc-100);
+
+  --primary: var(--emerald-500);
+  --primary-hover: var(--emerald-400);
+  --primary-foreground: var(--zinc-950);
+  
+  --secondary: var(--zinc-800);
+  --secondary-foreground: var(--zinc-200);
+  
+  --muted: var(--zinc-800);
+  --muted-foreground: var(--zinc-400);
+  
+  --accent: var(--zinc-800);
+  --accent-foreground: var(--zinc-100);
+
+  --brand-accent: var(--emerald-500);
+  --brand-accent-hover: var(--emerald-400);
+
+  --destructive: var(--critical-700);
+  --destructive-foreground: var(--zinc-50);
+
+  --border: var(--zinc-800);
+  --input: var(--zinc-800);
+  --ring: var(--emerald-500);
+
+  /* status semantics */
+  --status-good: var(--good);
+  --status-warning: var(--warning);
+  --status-critical: var(--critical);
+  --status-toil: var(--toil);
+  --status-info: var(--info);
+
+  /* data-viz ramp */
+  --chart-1: var(--emerald-500);
+  --chart-2: var(--info);
+  --chart-3: var(--zinc-500);
+  --chart-4: var(--warning);
+  --chart-5: var(--toil);
+
+  /* ---- Sidebar ---- */
+  --sidebar: var(--zinc-950);
+  --sidebar-foreground: var(--zinc-400);
+  --sidebar-primary: var(--emerald-500);
+  --sidebar-primary-foreground: var(--zinc-950);
+  --sidebar-accent: var(--zinc-900);
+  --sidebar-accent-foreground: var(--zinc-100);
+  --sidebar-border: var(--zinc-800);
+  --sidebar-ring: var(--emerald-500);
+
+  /* ---- Terminal surface (AgentSummary) ---- */
+  --terminal-top: #000000;
+  --terminal-bottom: #050505;
+  --terminal-glow: rgb(16 185 129 / 0.15);
+}

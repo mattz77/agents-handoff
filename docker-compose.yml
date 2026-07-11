@@ -1,0 +1,150 @@
+services:
+  handoff-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: handoff-daemon
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - REDIS_PASS_FILE=/run/secrets/redis_pass
+      - DATABASE_URL=${DATABASE_URL}
+      # Painel /ops protegido por Cloudflare Access (OTP por email). O app revalida o JWT do Access.
+      - CF_ACCESS_TEAM_DOMAIN=${CF_ACCESS_TEAM_DOMAIN}
+      - CF_ACCESS_AUD=${CF_ACCESS_AUD}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      # Hermes 3 (Ollama no host). host.docker.internal resolve o host a partir do container.
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - HERMES_MODEL=${HERMES_MODEL:-hermes3:8b}
+      - HERMES_ENABLED=${HERMES_ENABLED:-true}
+      - HERMES_TIMEOUT_MS=${HERMES_TIMEOUT_MS:-45000}
+      # AnythingLLM (RAG) — token p/ sync autônomo via API
+      - ANYTHINGLLM_BASE_URL=${ANYTHINGLLM_BASE_URL:-}
+      - ANYTHINGLLM_API_KEY=${ANYTHINGLLM_API_KEY:-}
+      - ANYTHINGLLM_WORKSPACE=${ANYTHINGLLM_WORKSPACE:-assistant-chats}
+      # Paths que o rag-watcher.ts usa dentro do container (via env var)
+      - WATCHER_BRAIN_DIR=/data/llm-brain
+      - WATCHER_DATALAKE_KB_DIR=/data/datalake/Knowledge_Base
+      - WATCHER_DATALAKE_CORPUS_DIR=/data/datalake/Memory/corpus
+      # RAG (Gemini embeddings)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # VectorStore do LanceDB NÃO pode ficar sob o mount :ro do Google Drive (TASK 35 Fase 4) — volume próprio, writable.
+      - RAG_VECTORSTORE_DIR=/data/vectorstore
+      # Code Review Agent (Minimax M3 via NVIDIA NIM) — TASK 37/38
+      - LINTER_BASE_URL=${LINTER_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - LINTER_API_KEY=${LINTER_API_KEY:-}
+      - LINTER_MODEL=${LINTER_MODEL:-minimaxai/minimax-m3}
+      - LINTER_TIMEOUT_MS=${LINTER_TIMEOUT_MS:-300000}
+      - LINTER_MAX_TOKENS=${LINTER_MAX_TOKENS:-8192}
+      - CODEREVIEW_MAX_DIFF_CHARS=${CODEREVIEW_MAX_DIFF_CHARS:-80000}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    extra_hosts:
+      # Em Linux (vmaz) mapeia host.docker.internal p/ o gateway; no Docker Desktop já existe.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Monta o Google Drive real para o watcher detectar mudanças ao vivo.
+      # Tentativa de :rw (TASK 37/38, botão "criar task") revertida: Docker Desktop no Windows
+      # não renegociou o bind mount ao trocar a flag — ficou vazio/sem permissão dentro do
+      # container. POST /ops/api/brain/tasks escreve via publish-handoff.js (docker exec no host,
+      # fora do container) até resolver o compartilhamento do Drive com permissão de escrita.
+      - "C:/Users/olive/llm-brain-mirror:/data/llm-brain:rw"
+      - "G:/Meu Drive/Luma_DataLake:/data/datalake:ro"
+      - C:/Users/olive/Documents/Luma-APP:/repo:ro
+      - rag-vectorstore:/data/vectorstore
+    ports:
+      - "3000:3000"
+    labels:
+      - "traefik.enable=false"
+    secrets:
+      - redis_pass
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    networks:
+      - luma-net
+      - n8n-net
+    depends_on:
+      - redis-master
+      - sentinel-1
+      - sentinel-2
+      - sentinel-3
+
+  redis-master:
+    image: redis:7-alpine
+    container_name: handoff-redis-master
+    command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); redis-server --appendonly yes --appendfsync everysec --maxmemory 2gb --maxmemory-policy noeviction --requirepass "$$PASS"'
+    secrets:
+      - redis_pass
+    volumes:
+      - redis-master-data:/data
+    networks:
+      - luma-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "PASS=$$(cat /run/secrets/redis_pass | xargs); redis-cli -a $$PASS ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-replica-1: &replica
+    image: redis:7-alpine
+    command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); redis-server --appendonly yes --appendfsync everysec --replicaof handoff-redis-master 6379 --masterauth "$$PASS" --requirepass "$$PASS"'
+    secrets:
+      - redis_pass
+    depends_on:
+      - redis-master
+    networks:
+      - luma-net
+    restart: unless-stopped
+
+  redis-replica-2:
+    <<: *replica
+
+  sentinel-1: &sentinel
+    image: redis:7-alpine
+    command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); mkdir -p /etc/redis; echo "sentinel resolve-hostnames yes" > /etc/redis/sentinel.conf; echo "sentinel monitor mymaster handoff-redis-master 6379 2" >> /etc/redis/sentinel.conf; echo "sentinel auth-pass mymaster $$PASS" >> /etc/redis/sentinel.conf; redis-sentinel /etc/redis/sentinel.conf'
+    secrets:
+      - redis_pass
+    depends_on:
+      - redis-master
+    networks:
+      - luma-net
+    restart: unless-stopped
+
+  sentinel-2:
+    <<: *sentinel
+  sentinel-3:
+    <<: *sentinel
+
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: docker-socket-proxy
+    environment:
+      - CONTAINERS=1
+      - INFO=1
+      - PING=1
+      - POST=0
+      - EXEC=0
+      - VOLUMES=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - luma-net
+    restart: unless-stopped
+
+secrets:
+  redis_pass:
+    file: ./secrets/redis_secret.txt
+
+volumes:
+  redis-master-data:
+  rag-vectorstore:
+
+networks:
+  luma-net:
+    external: true
+    name: luma-net
+  n8n-net:
+    external: true
+    name: cordenaain8n_default

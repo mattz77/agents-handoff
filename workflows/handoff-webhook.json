@@ -1,0 +1,117 @@
+{
+  "name": "Handoff Daemon - WhatsApp Receiver",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "handoff-receive",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "e6f47738-f9b8-4c74-8843-b2b5a1954f9a",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "handoff-receive"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst secret = $env.N8N_HMAC_SECRET || 'secret_temporario_ajustar';\nconst payload = JSON.stringify($input.item.json.body);\nconst signature = $input.item.json.headers['x-signature'];\n\nif (!signature) throw new Error('Missing X-Signature');\n\nconst expected = 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\nif (signature !== expected) {\n  throw new Error('HMAC signature mismatch!');\n}\n\nreturn $input.item;"
+      },
+      "id": "2b260e0a-2007-4223-bd77-27e1088a7c29",
+      "name": "Validate HMAC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://sua-evolution-api.com/message/sendText/InstanciaX",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "sua-api-key-evolution"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $json.body.destination }}"
+            },
+            {
+              "name": "options",
+              "value": "{\"delay\": 1200, \"presence\": \"composing\"}"
+            },
+            {
+              "name": "textMessage",
+              "value": "={{ $json.body.message_content }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4d1db49c-f236-47b2-b5e1-0b3294baec14",
+      "name": "Send WhatsApp (Evolution)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"delivered\"\n}",
+        "options": {}
+      },
+      "id": "893d5612-9c3f-4e0d-b2a6-fb38e0724817",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate HMAC": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp (Evolution)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp (Evolution)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
