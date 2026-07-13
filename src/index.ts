@@ -3,6 +3,7 @@ import { applyHandoffTransition, drainOutbox, persistHermesAudit } from "./outbo
 import { HandoffEnvelope } from "./domain/handoff";
 import { runHermesAudit } from "./hermes/linter";
 import { handleOpsRequest } from "./ops/server";
+import { handleAgentRequest } from "./ops/agent-api";
 import { startRagWatcher } from "./hermes/rag-watcher";
 import { startCodeReviewCron } from "./ops/codereview-cron";
 import { checkBrainSizeAlert } from "./ops/metrics";
@@ -16,7 +17,8 @@ console.log("🚀 Iniciando Antigravity Handoff Daemon v7.0...");
 
 // Servidor HTTP: /health (readiness real), /ops (painel) e /ops/api/* (REST)
 const server = http.createServer((req, res) => {
-  handleOpsRequest(req, res)
+  handleAgentRequest(req, res)
+    .then((handled) => (handled ? true : handleOpsRequest(req, res)))
     .then((handled) => {
       if (!handled) {
         res.writeHead(404, { "Content-Type": "application/json" });

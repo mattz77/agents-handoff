@@ -16,7 +16,7 @@ interface CodeReviewResult {
 }
 
 function systemPrompt(displayName: string): string {
-  return `Você é um engenheiro sênior revisando código do projeto ${displayName}.
+  return `Você é o Daemon-CodeReview, engenheiro sênior revisando código do projeto ${displayName}.
 Responda APENAS com JSON válido no schema:
 {
   "score": <0-10>,

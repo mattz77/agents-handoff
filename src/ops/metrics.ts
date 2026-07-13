@@ -319,6 +319,7 @@ function safeReadFile(path: string): string | null {
 export interface NewBrainTask {
   title: string;
   project?: string;
+  commit?: string;
   assigned?: string;
   priority?: string;
   context?: string;
@@ -342,6 +343,8 @@ export function appendBrainTask(t: NewBrainTask): { ok: boolean; error?: string 
     `**Assigned:** ${t.assigned || "Claude"}`,
     `**Created by:** Painel /ops (Code Review)`,
     `**Prioridade:** ${t.priority || "média"}`,
+    ...(t.project ? [`**Projeto:** ${t.project}`] : []),
+    ...(t.commit ? [`**Commit:** ${t.commit}`] : []),
     "",
     "### Contexto",
     t.context || (t.project ? `Gerada a partir de issue de code review no projeto ${t.project}.` : "Gerada a partir do painel /ops."),
@@ -388,7 +391,7 @@ export interface BrainStatus {
   blockedTasks: number;
   recentDecisions: Array<{ date: string; title: string; model: string }>;
   infraHealth: string;
-  taskList: Array<{ title: string; status: string; assigned: string; priority: string }>;
+  taskList: Array<{ title: string; status: string; assigned: string; priority: string; project?: string; commit?: string }>;
   hotSizeKB: number;
   hotSizeAlert: boolean;
 }
@@ -418,10 +421,20 @@ export function getBrainStatus(): BrainStatus {
   }
 
   const taskList: BrainStatus["taskList"] = [];
-  const taskRegex = /## \[(pending|in_progress|done|blocked)\]\s*(?:TASK \d+ — )?(.+)\n[\s\S]*?\*\*Assigned:\*\*\s*(.+)\n[\s\S]*?\*\*Prioridade:\*\*\s*(.+)/gi;
+  const headerRegex = /## \[(pending|in_progress|done|blocked)\]\s*(?:TASK \d+ — )?(.+)/gi;
   let m;
-  while ((m = taskRegex.exec(tq)) !== null) {
-    taskList.push({ status: m[1], title: m[2].trim(), assigned: m[3].trim(), priority: m[4].trim() });
+  while ((m = headerRegex.exec(tq)) !== null) {
+    const next = tq.indexOf("\n## ", m.index + 1);
+    const block = tq.slice(m.index, next === -1 ? undefined : next);
+    const field = (name: string) => block.match(new RegExp(`\\*\\*${name}:\\*\\*\\s*(.+)`))?.[1]?.trim();
+    taskList.push({
+      status: m[1],
+      title: m[2].trim(),
+      assigned: field("Assigned") ?? "—",
+      priority: field("Prioridade") ?? "—",
+      project: field("Projeto"),
+      commit: field("Commit"),
+    });
   }
 
   const decisions: BrainStatus["recentDecisions"] = [];

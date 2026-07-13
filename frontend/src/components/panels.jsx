@@ -314,6 +314,44 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
   // ============================================================
   // INFRA
   // ============================================================
+  function GithubTokenSection() {
+    const [status, setStatus] = React.useState(null);
+    const [token, setToken] = React.useState('');
+    const [saving, setSaving] = React.useState(false);
+
+    const refresh = () => {
+      fetch('/ops/api/settings/github-token')
+        .then(r => r.json())
+        .then(setStatus)
+        .catch(() => setStatus({ configured: false, source: 'none' }));
+    };
+    React.useEffect(() => { refresh(); }, []);
+
+    const save = (e) => {
+      e.preventDefault();
+      if (!token.trim()) return;
+      setSaving(true);
+      fetch('/ops/api/settings/github-token', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim() })
+      }).then(() => { setToken(''); setSaving(false); refresh(); })
+        .catch(() => setSaving(false));
+    };
+
+    return React.createElement(Section, { icon: 'shield', title: 'GitHub PAT (global)', accent: 'var(--copper)',
+        actions: status && React.createElement(StatusBadge, { status: status.configured ? 'good' : 'critical' },
+          status.configured ? 'configurado (' + status.source + ')' : 'não configurado') },
+      React.createElement('form', { onSubmit: save, style: { display: 'flex', gap: 8, padding: 12 } },
+        React.createElement('input', {
+          className: 'cb-input', type: 'password', placeholder: 'ghp_... (novo token)',
+          value: token, onChange: e => setToken(e.target.value), style: { flex: 1 }
+        }),
+        React.createElement(Button, { size: 'sm', type: 'submit', disabled: saving || !token.trim() }, saving ? 'Salvando...' : 'Salvar')
+      )
+    );
+  }
+
   function InfraPanel() {
     const HD = window.HD, s = HD.system, d = HD.docker, r = HD.redisHA;
     const memPct = Math.round(s.memoryUsedMB / s.memoryTotalMB * 100);
@@ -325,6 +363,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       ['Plataforma', s.platform],
     ];
     return React.createElement('div', { className: 'panel animate-fade-up' },
+      React.createElement(GithubTokenSection),
       React.createElement(Section, { icon: 'cpu', title: 'Sistema', bodyClass: 'sys-body' },
         React.createElement('div', { className: 'sysbar' },
           (sysItems || []).map(([k, v, pct, kind], i) => React.createElement('div', { key: i, className: 'sysbar__item' },
@@ -619,8 +658,9 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         body: JSON.stringify({
           title,
           project: report.project_slug,
+          commit: report.commit_sha || undefined,
           priority: issue.severity === 'critical' ? 'alta' : 'média',
-          context: `Issue [${issue.severity}/${issue.category}] encontrada pelo code review (Minimax M3) no commit ${(report.commit_sha || '').slice(0, 7)}.\n\n${issue.file}${issue.line != null ? ':' + issue.line : ''}\n${issue.message}`,
+          context: `Issue [${issue.severity}/${issue.category}] encontrada pelo Daemon-CodeReview no commit ${(report.commit_sha || '').slice(0, 7)}.\n\n${issue.file}${issue.line != null ? ':' + issue.line : ''}\n${issue.message}`,
           action: issue.suggestion || '(ver sugestão do review)',
           expected: 'Issue corrigida e commitada.',
         }),
@@ -785,7 +825,9 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const [projects, setProjects] = React.useState([]);
     const [loading, setLoading] = React.useState(true);
     const [formOpen, setFormOpen] = React.useState(false);
-    const [formData, setFormData] = React.useState({ slug: '', display_name: '', local_path: '', git_owner: '', git_repo: '', default_branch: 'main', codereview_schedule: '23:45' });
+    const [editingSlug, setEditingSlug] = React.useState(null);
+    const emptyForm = { slug: '', display_name: '', local_path: '', git_owner: '', git_repo: '', default_branch: 'main', codereview_schedule: '02:00', codereview_auto: false };
+    const [formData, setFormData] = React.useState(emptyForm);
 
     const fetchProjects = () => {
       fetch('/ops/api/projects')
@@ -796,14 +838,34 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
 
     React.useEffect(() => { fetchProjects(); }, []);
 
+    const openNew = () => { setEditingSlug(null); setFormData(emptyForm); setFormOpen(true); };
+    const openEdit = (r) => {
+      setEditingSlug(r.slug);
+      setFormData({
+        slug: r.slug,
+        display_name: r.display_name || '',
+        local_path: r.local_path || '',
+        git_owner: r.git_owner || '',
+        git_repo: r.git_repo || '',
+        default_branch: r.default_branch || 'main',
+        codereview_schedule: r.codereview_schedule || '02:00',
+        codereview_auto: !!r.codereview_auto,
+      });
+      setFormOpen(true);
+    };
+
     const saveProject = (e) => {
       e.preventDefault();
-      fetch('/ops/api/projects', {
-        method: 'POST',
+      const isEdit = !!editingSlug;
+      const url = isEdit ? '/ops/api/projects/' + encodeURIComponent(editingSlug) : '/ops/api/projects';
+      const { slug, ...patchBody } = formData;
+      fetch(url, {
+        method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(isEdit ? patchBody : formData)
       }).then(() => {
         setFormOpen(false);
+        setEditingSlug(null);
         fetchProjects();
       }).catch(e => alert(e));
     };
@@ -820,7 +882,11 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       { label: 'Nome', render: (r) => r.display_name },
       { label: 'Repositório', muted: true, render: (r) => React.createElement('span', { className: 'mono' }, (r.git_owner || '?') + '/' + (r.git_repo || '?')) },
       { label: 'Caminho Local', muted: true, render: (r) => React.createElement('span', { className: 'mono' }, r.local_path || '—') },
+      { label: 'Review Diário', align: 'center', render: (r) => r.codereview_auto
+        ? React.createElement(StatusBadge, { status: 'good' }, 'auto ' + (r.codereview_schedule || '02:00'))
+        : React.createElement(StatusBadge, { status: 'neutral' }, 'manual') },
       { label: 'Ações', align: 'right', render: (r) => React.createElement('div', { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
+        React.createElement(Button, { size: 'sm', variant: 'outline', onClick: (e) => { e.stopPropagation(); openEdit(r); } }, 'Editar'),
         React.createElement(Button, { size: 'sm', variant: 'outline', onClick: (e) => { e.stopPropagation(); deleteProject(r.slug); } }, 'Remover')
       ) },
     ];
@@ -832,18 +898,18 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         icon: 'folder', 
         title: 'Projetos', 
         count: projects.length,
-        actions: React.createElement(Button, { size: 'sm', onClick: () => setFormOpen(true) }, 'Adicionar Projeto') 
+        actions: React.createElement(Button, { size: 'sm', onClick: openNew }, 'Adicionar Projeto')
       },
         loading ? React.createElement('div', { className: 'empty' }, 'Carregando...') :
         React.createElement(DataTable, { cols, rows, empty: 'Nenhum projeto cadastrado.' })
       ),
       formOpen && React.createElement('div', { className: 'drawer-ov open', style: { zIndex: 100 }, onClick: () => setFormOpen(false) }),
       formOpen && React.createElement('div', { className: 'drawer open', style: { zIndex: 101, padding: '24px', width: '100%', maxWidth: '400px' } },
-        React.createElement('h3', { style: { marginTop: 0 } }, 'Novo Projeto'),
+        React.createElement('h3', { style: { marginTop: 0 } }, editingSlug ? 'Editar Projeto — ' + editingSlug : 'Novo Projeto'),
         React.createElement('form', { onSubmit: saveProject, style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Slug (ID)'),
-            React.createElement('input', { className: 'cb-input', required: true, value: formData.slug, onChange: e => setFormData({...formData, slug: e.target.value}) })
+            React.createElement('input', { className: 'cb-input', required: true, disabled: !!editingSlug, value: formData.slug, onChange: e => setFormData({...formData, slug: e.target.value}) })
           ),
           React.createElement('div', null,
             React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Nome de Exibição'),
@@ -860,6 +926,14 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
           React.createElement('div', null,
             React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Caminho Local (Docker)'),
             React.createElement('input', { className: 'cb-input', placeholder: '/repo', value: formData.local_path, onChange: e => setFormData({...formData, local_path: e.target.value}) })
+          ),
+          React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            React.createElement('input', { type: 'checkbox', id: 'cr-auto', checked: !!formData.codereview_auto, onChange: e => setFormData({...formData, codereview_auto: e.target.checked}) }),
+            React.createElement('label', { htmlFor: 'cr-auto', style: { fontSize: '13px', cursor: 'pointer' } }, 'Review diário automático')
+          ),
+          formData.codereview_auto && React.createElement('div', null,
+            React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Horário do review (BRT)'),
+            React.createElement('input', { className: 'cb-input', type: 'time', value: formData.codereview_schedule, onChange: e => setFormData({...formData, codereview_schedule: e.target.value}) })
           ),
           React.createElement('div', { style: { display: 'flex', gap: '8px', marginTop: '16px' } },
             React.createElement(Button, { type: 'submit' }, 'Salvar'),

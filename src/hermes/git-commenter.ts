@@ -1,4 +1,4 @@
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
+import { getGithubToken } from "../infra/postgres";
 
 export interface CodeReviewIssue {
   file: string;
@@ -18,7 +18,8 @@ export async function postReviewComments(
   issues: CodeReviewIssue[],
   summary: string
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!GITHUB_TOKEN) return { ok: false, error: "GITHUB_TOKEN não configurado" };
+  const token = await getGithubToken();
+  if (!token) return { ok: false, error: "GITHUB_TOKEN não configurado" };
 
   const inline = issues.filter((i) => i.line != null);
   const general = issues.filter((i) => i.line == null);
@@ -27,11 +28,11 @@ export async function postReviewComments(
     path: i.file,
     line: i.line,
     side: "RIGHT",
-    body: `🤖 **Minimax M3** [${i.severity}] — ${i.message}` +
+    body: `🤖 **Daemon-CodeReview** [${i.severity}] — ${i.message}` +
       (i.suggestion ? `\n\n\`\`\`suggestion\n${i.suggestion}\n\`\`\`` : ""),
   }));
 
-  const generalBody = [summary, ...general.map((i) => `- [${i.severity}] ${i.file}: ${i.message}`)]
+  const generalBody = ["## 🤖 Daemon-CodeReview", summary, ...general.map((i) => `- [${i.severity}] ${i.file}: ${i.message}`)]
     .filter(Boolean)
     .join("\n\n");
 
@@ -39,7 +40,7 @@ export async function postReviewComments(
     fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github+json",
         "Content-Type": "application/json",
       },
