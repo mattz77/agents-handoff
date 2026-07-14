@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { pg } from "../infra/postgres";
 import { getBrainStatus } from "./metrics";
 import { getCodeReviewData } from "./codereview-data";
@@ -7,7 +8,16 @@ import { runCodeReviewForSlug } from "./codereview-cron";
 // API de agente — consumida por bots externos (Telegram via n8n, AnythingLLM agent skill).
 // Fica fora de /ops/api/* de propósito: aquele prefixo é gated pelo Cloudflare Access (JWT de
 // browser), que bots não têm. Aqui a auth é Bearer token fixo (AGENT_API_TOKEN no .env).
-const AGENT_TOKEN = process.env.AGENT_API_TOKEN || "";
+let AGENT_TOKEN = process.env.AGENT_API_TOKEN || "";
+let AGENT_TOKEN_HASH = AGENT_TOKEN ? createHash("sha256").update(AGENT_TOKEN).digest() : null;
+
+/** @internal Reatribui o token em runtime (ex.: reload de config) e recomputa o hash. */
+function setAgentToken(token: string) {
+  const next = token || "";
+  if (next === AGENT_TOKEN) return; // idempotente: hash já é derivado do token atual
+  AGENT_TOKEN = next;
+  AGENT_TOKEN_HASH = next ? createHash("sha256").update(next).digest() : null;
+}
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
@@ -15,9 +25,14 @@ function json(res: http.ServerResponse, code: number, body: unknown) {
 }
 
 function authorized(req: http.IncomingMessage): boolean {
-  if (!AGENT_TOKEN) return false; // sem token configurado, API desligada (fail-closed)
+  if (!AGENT_TOKEN_HASH) return false; // sem hash => sem token => API desligada (fail-closed)
+  const PREFIX = "Bearer ";
   const header = req.headers.authorization || "";
-  return header === `Bearer ${AGENT_TOKEN}`;
+  if (!header.startsWith(PREFIX)) return false;
+  const provided = header.slice(PREFIX.length);
+  if (!provided) return false;
+  const a = createHash("sha256").update(provided).digest();
+  return timingSafeEqual(a, AGENT_TOKEN_HASH);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
