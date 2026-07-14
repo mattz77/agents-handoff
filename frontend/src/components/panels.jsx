@@ -405,7 +405,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
           status.configured ? 'configurado (' + status.source + ')' : 'não configurado') },
       React.createElement('form', { onSubmit: save, style: { display: 'flex', gap: 8, padding: 12 } },
         React.createElement('input', {
-          className: 'cb-input', type: 'password', placeholder: 'ghp_... (novo token)',
+          className: 'cb-input', type: 'password', placeholder: 'Insira o token GitHub',
           value: token, onChange: e => setToken(e.target.value), style: { flex: 1 }
         }),
         React.createElement(Button, { size: 'sm', type: 'submit', disabled: saving || !token.trim() }, saving ? 'Salvando...' : 'Salvar')
