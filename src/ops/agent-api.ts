@@ -17,10 +17,14 @@ function json(res: http.ServerResponse, code: number, body: unknown) {
 
 function authorized(req: http.IncomingMessage): boolean {
   if (!AGENT_TOKEN) return false; // sem token configurado, API desligada (fail-closed)
+  const prefix = "Bearer ";
   const header = req.headers.authorization || "";
-  const bufHeader = Buffer.from(header);
-  const bufToken = Buffer.from(`Bearer ${AGENT_TOKEN}`);
-  return bufHeader.length === bufToken.length && timingSafeEqual(bufHeader, bufToken);
+  if (!header.startsWith(prefix)) return false;
+  const provided = header.slice(prefix.length);
+  const expected = AGENT_TOKEN;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
