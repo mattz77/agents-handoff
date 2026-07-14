@@ -2,7 +2,7 @@ import http from "node:http";
 import { redis } from "../infra/redis";
 import fs from "node:fs";
 import { join, extname } from "node:path";
-import { pg } from "../infra/postgres";
+import { pg, getGithubToken } from "../infra/postgres";
 import {
   getOverview,
   getRecentHandoffs,
@@ -267,11 +267,23 @@ export async function handleOpsRequest(
     if (method === "GET" && path === "/ops/api/codereview/attacks") {
       const slug = url.searchParams.get("slug");
       const { rows } = await pg.query(
-        `select id, project_slug, report_id, model_used, status, branch, pr_url, issues_total, issues_fixed, log, error, created_at, finished_at
-         from codereview_attacks ${slug ? "where project_slug = $1" : ""} order by created_at desc limit 20`,
+        `select id, project_slug, report_id, model_used, status, branch, pr_url, pr_number,
+                issues_total, issues_fixed, log, current_step, round, cycle_id,
+                verify_status, verify_model, verify_notes, error, created_at, finished_at
+         from codereview_attacks ${slug ? "where project_slug = $1" : ""} order by created_at desc limit 30`,
         slug ? [slug] : []
       );
       return json(res, 200, { attacks: rows }), true;
+    }
+    if (method === "GET" && path.match(/^\/ops\/api\/codereview\/cycle\/\d+$/)) {
+      const cycleId = Number(path.split("/").pop());
+      const { rows } = await pg.query(
+        `select id, round, status, model_used, verify_status, verify_model, verify_notes, current_step,
+                issues_total, issues_fixed, pr_url, pr_number, created_at, finished_at
+         from codereview_attacks where cycle_id = $1 order by round asc`,
+        [cycleId]
+      );
+      return json(res, 200, { rounds: rows }), true;
     }
     if (method === "POST" && path === "/ops/api/codereview/attack") {
       const body = await readBody(req);
@@ -286,14 +298,38 @@ export async function handleOpsRequest(
       if (alreadyRunning.length) {
         return json(res, 409, { error: `Ataque #${alreadyRunning[0].id} já em curso para "${body.slug}" (outra réplica/restart) — aguarde terminar.` }), true;
       }
-      // Ataque é longo (várias chamadas NIM + commits + review pós-ataque) — roda em
+      // Ciclo completo (ataque + verificação + possíveis rodadas seguintes) é longo — roda em
       // background, frontend acompanha via GET /ops/api/codereview/attacks?slug=.
       runAttackForSlug(String(body.slug), {
         reportId: body.reportId ? Number(body.reportId) : undefined,
         model: body.model ? String(body.model) : undefined,
-      }).then((r) => console.log(`[FixAgent] ataque ${body.slug}:`, JSON.stringify(r).slice(0, 200)))
-        .catch((e) => console.error(`[FixAgent] ataque ${body.slug} rejeitado:`, e.message));
+        verifyModel: body.verifyModel ? String(body.verifyModel) : undefined,
+      }).then((r) => console.log(`[FixAgent] ciclo ${body.slug}:`, JSON.stringify(r).slice(0, 200)))
+        .catch((e) => console.error(`[FixAgent] ciclo ${body.slug} rejeitado:`, e.message));
       return json(res, 202, { started: true, slug: body.slug }), true;
+    }
+    if (method === "POST" && path === "/ops/api/codereview/merge") {
+      const body = await readBody(req);
+      if (!body.slug || !body.prNumber) return json(res, 400, { error: "Campos 'slug' e 'prNumber' são obrigatórios" }), true;
+      const { rows: projRows } = await pg.query(`select git_owner, git_repo from handoff_projects where slug = $1`, [body.slug]);
+      if (!projRows.length || !projRows[0].git_owner || !projRows[0].git_repo) {
+        return json(res, 404, { error: `Projeto "${body.slug}" não encontrado ou sem git_owner/git_repo` }), true;
+      }
+      const { git_owner: owner, git_repo: repo } = projRows[0];
+      const token = await getGithubToken();
+      if (!token) return json(res, 500, { error: "GITHUB_TOKEN não configurado" }), true;
+      const mergeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${body.prNumber}/merge`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+        body: JSON.stringify({ merge_method: body.mergeMethod || "squash" }),
+      });
+      const mergeData = await mergeRes.json().catch(() => ({}));
+      if (!mergeRes.ok) return json(res, 422, { error: mergeData.message || `GitHub HTTP ${mergeRes.status}` }), true;
+      await pg.query(
+        `update codereview_attacks set current_step = 'PR mergeado manualmente' where pr_number = $2 and project_slug = $1`,
+        [body.slug, body.prNumber]
+      ).catch(() => {});
+      return json(res, 200, { merged: true, sha: mergeData.sha }), true;
     }
     if (method === "GET" && path.match(/^\/ops\/api\/codereview\/[^/]+$/)) {
       const slug = path.substring("/ops/api/codereview/".length);

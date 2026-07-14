@@ -721,11 +721,15 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const [projectFilter, setProjectFilter] = React.useState('');
     const [taskState, setTaskState] = React.useState({}); // issue key -> 'creating'|'done'|'error'
     const [models, setModels] = React.useState([]);
-    const [recommended, setRecommended] = React.useState({ review: [], fix: [] });
-    const [modelSel, setModelSel] = React.useState(''); // '' = usa o default do projeto/env
+    const [recommended, setRecommended] = React.useState({ review: [], fix: [], verify: [], test: [] });
+    const [modelSel, setModelSel] = React.useState(''); // '' = usa o default do projeto/env — modelo do review
+    const [attackModelSel, setAttackModelSel] = React.useState(''); // modelo do Daemon-FixAgent
+    const [verifyModelSel, setVerifyModelSel] = React.useState(''); // modelo do Daemon-Verifier
+    const [showModelPickers, setShowModelPickers] = React.useState(false);
     const [runError, setRunError] = React.useState('');
     const [attacks, setAttacks] = React.useState([]);
     const [attacking, setAttacking] = React.useState(false);
+    const [merging, setMerging] = React.useState(false);
 
     const load = React.useCallback(() => {
       return fetch('/ops/api/codereview')
@@ -755,16 +759,35 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         .catch(() => {});
     }, []);
 
-    // Enquanto houver ataque running, polla a cada 5s (progresso vem do log jsonb).
+    // Enquanto houver ciclo running, polla a cada 2s — current_step muda a cada fase
+    // (revisando/commitando/verificando), então intervalo curto é o que dá a sensação de
+    // "ver o agente trabalhando" em vez de só um spinner sem contexto.
     React.useEffect(() => {
       if (!attacks.some(a => a.status === 'running')) return;
       const t = setInterval(() => {
         loadAttacks().then(list => {
           if (!list.some(a => a.status === 'running')) { setAttacking(false); load(); }
         });
-      }, 5000);
+      }, 2000);
       return () => clearInterval(t);
     }, [attacks, loadAttacks, load]);
+
+    const mergeReport = React.useCallback((slug, prNumber) => {
+      if (!prNumber || merging) return;
+      setMerging(true);
+      setRunError('');
+      fetch('/ops/api/codereview/merge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug, prNumber, mergeMethod: 'squash' }),
+      })
+        .then(async (r) => {
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok || data.error) setRunError(data.error || `HTTP ${r.status}`);
+          return loadAttacks();
+        })
+        .catch(err => setRunError(String(err)))
+        .finally(() => setMerging(false));
+    }, [merging, loadAttacks]);
 
     const runNow = () => {
       setRunning(true);
@@ -783,7 +806,11 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       setRunError('');
       fetch('/ops/api/codereview/attack', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: report.project_slug, reportId: report.id, ...(modelSel ? { model: modelSel } : {}) }),
+        body: JSON.stringify({
+          slug: report.project_slug, reportId: report.id,
+          ...(attackModelSel ? { model: attackModelSel } : {}),
+          ...(verifyModelSel ? { verifyModel: verifyModelSel } : {}),
+        }),
       })
         .then(async (r) => {
           const data = await r.json().catch(() => ({}));
@@ -862,45 +889,65 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             onClick: () => { setProjectFilter(p); setSelected(0); },
           }, p))),
         React.createElement('div', { className: 'cr-toolbar__run' },
-          models.length > 0 && React.createElement('select', {
-            className: 'cr-model-select', value: modelSel, onChange: (e) => setModelSel(e.target.value),
-            title: 'Modelo NVIDIA NIM. ◆ = indicado pra review de código, ▲ = indicado pra implementar fixes (Atacar PR).',
-          },
-            React.createElement('option', { value: '' }, 'Modelo padrão'),
-            (recommended.review || []).filter(m => models.includes(m)).length > 0 &&
-              React.createElement('optgroup', { label: '◆ Indicados — Review' },
-                (recommended.review || []).filter(m => models.includes(m)).map(m =>
-                  React.createElement('option', { key: 'r-' + m, value: m, className: 'opt-rec-review' }, '◆ ' + m))),
-            (recommended.fix || []).filter(m => models.includes(m)).length > 0 &&
-              React.createElement('optgroup', { label: '▲ Indicados — Fix / Atacar PR' },
-                (recommended.fix || []).filter(m => models.includes(m)).map(m =>
-                  React.createElement('option', { key: 'f-' + m, value: m, className: 'opt-rec-fix' }, '▲ ' + m))),
-            React.createElement('optgroup', { label: 'Todos os modelos' },
-              models.map(m => React.createElement('option', { key: m, value: m }, m)))),
           React.createElement('button', { className: 'cb-btn', onClick: runNow, disabled: running },
             running ? 'Executando…' : projectFilter ? `Rodar review — ${projectFilter}` : 'Rodar review agora'),
           React.createElement('button', {
             className: 'cb-btn cb-btn--attack', onClick: () => attackNow(latest),
             disabled: attacking || !latest || issues.length === 0 || attacks.some(a => a.status === 'running' && a.project_slug === latest.project_slug),
-            title: 'Daemon-FixAgent corrige as issues deste report uma a uma e abre um PR de correção; ao final o review roda de novo sobre esse PR (ciclo).',
-          }, attacking ? 'Atacando…' : 'Atacar PR'))),
+            title: 'Ciclo: Daemon-FixAgent corrige as issues e abre PR; Daemon-Verifier audita o PR e aprova ou devolve o que falta — repete até consenso ou limite de rodadas.',
+          }, attacking ? 'Atacando…' : 'Atacar PR'),
+          React.createElement('button', {
+            className: cls('cb-btn cb-btn--ghost', showModelPickers && 'cb-btn--ghost-on'), onClick: () => setShowModelPickers(v => !v),
+            title: 'Escolher modelo por função (review / fix / verify)',
+          }, React.createElement(Icon, { name: 'settings', size: 13 }), ' Modelos'))),
+        showModelPickers && models.length > 0 && React.createElement('div', { className: 'cr-model-row' },
+          [['review', modelSel, setModelSel, '◆', 'Review'], ['fix', attackModelSel, setAttackModelSel, '▲', 'Fix'], ['verify', verifyModelSel, setVerifyModelSel, '●', 'Verify']].map(function (field) {
+            const role = field[0], val = field[1], setter = field[2], glyph = field[3], label = field[4];
+            const recForRole = (recommended[role] || []).filter(function (m) { return models.includes(m); });
+            const options = [React.createElement('option', { key: 'def', value: '' }, 'padrão')];
+            if (recForRole.length > 0) {
+              options.push(React.createElement('optgroup', { key: 'rec', label: 'Indicados' },
+                recForRole.map(function (m) { return React.createElement('option', { key: 'rec-' + m, value: m }, m); })));
+            }
+            options.push(React.createElement('optgroup', { key: 'all', label: 'Todos' },
+              models.map(function (m) { return React.createElement('option', { key: 'all-' + m, value: m }, m); })));
+            return React.createElement('label', { key: role, className: 'cr-model-field' },
+              React.createElement('span', { className: cls('cr-model-field__lbl', 'cr-model-field__lbl--' + role) }, glyph + ' ' + label),
+              React.createElement('select', { className: 'cr-model-select', value: val, onChange: function (e) { setter(e.target.value); } }, options));
+          })),
       runError && React.createElement('div', { className: 'alert cr-run-error' },
         React.createElement(Icon, { name: 'alert', size: 14 }), ' ', runError),
       attacks.length > 0 && (attacks[0].status === 'running' || attacking) && React.createElement(Card, { className: 'cr-attack' },
         React.createElement('div', { className: 'cr-attack__head' },
           React.createElement('span', { className: 'cr-attack__title' },
-            React.createElement(Icon, { name: 'zap', size: 14 }), ' Ataque em curso — ', attacks[0].project_slug),
+            React.createElement(Icon, { name: 'zap', size: 14 }),
+            ' Rodada ', attacks[0].round || 1, ' — ', attacks[0].project_slug,
+            attacks[0].pr_number && React.createElement('span', { className: 'muted' }, ' · PR #' + attacks[0].pr_number)),
           React.createElement('span', { className: 'mono' }, (attacks[0].issues_fixed || 0) + '/' + (attacks[0].issues_total || 0) + ' corrigidas')),
+        React.createElement('div', { className: 'cr-attack__step mono' },
+          React.createElement('span', { className: 'cr-attack__dot' }), ' ', attacks[0].current_step || 'iniciando…'),
         React.createElement('div', { className: 'cr-attack__bar' },
           React.createElement('span', { style: { width: Math.round(100 * (attacks[0].issues_fixed || 0) / Math.max(attacks[0].issues_total || 1, 1)) + '%' } })),
         Array.isArray(attacks[0].log) && attacks[0].log.slice(-3).map((l, i) =>
           React.createElement('div', { key: i, className: 'cr-attack__log mono' },
             `[${l.status}] ${l.file}${l.line != null ? ':' + l.line : ''} — ${l.detail}`))),
-      attacks.length > 0 && attacks[0].status !== 'running' && !attacking && React.createElement('div', { className: cls('alert cr-attack-result', attacks[0].status === 'done' ? 'cr-attack-result--ok' : 'cr-attack-result--fail') },
-        React.createElement(Icon, { name: attacks[0].status === 'done' ? 'check' : 'alert', size: 14 }),
-        ' Último ataque: ', attacks[0].issues_fixed + '/' + attacks[0].issues_total + ' corrigidas',
-        attacks[0].pr_url && React.createElement('a', { href: attacks[0].pr_url, target: '_blank', rel: 'noreferrer', style: { marginLeft: 8 } }, 'ver PR'),
-        attacks[0].error && React.createElement('span', { className: 'muted', style: { marginLeft: 8 } }, attacks[0].error)),
+      attacks.length > 0 && attacks[0].status !== 'running' && !attacking && (() => {
+        const a = attacks[0];
+        const converged = a.verify_status === 'approved';
+        const needsHuman = a.verify_status === 'needs_human';
+        const tone = a.status !== 'done' ? 'fail' : converged ? 'ok' : needsHuman ? 'warn' : 'fail';
+        return React.createElement('div', { className: cls('alert cr-attack-result', 'cr-attack-result--' + tone) },
+          React.createElement(Icon, { name: converged ? 'check' : needsHuman ? 'alert' : 'alert', size: 14 }),
+          ' ', converged ? `Ciclo aprovado pelo Daemon-Verifier (rodada ${a.round || 1})` : needsHuman ? `Precisa de revisão humana (rodada ${a.round || 1})` : `Ataque falhou`,
+          ' — ', a.issues_fixed, '/', a.issues_total, ' corrigidas',
+          a.pr_url && React.createElement('a', { href: a.pr_url, target: '_blank', rel: 'noreferrer', style: { marginLeft: 8 } }, 'ver PR #' + a.pr_number),
+          converged && a.pr_number && React.createElement('button', {
+            className: 'cb-btn cb-btn--merge', style: { marginLeft: 10 }, disabled: merging,
+            onClick: () => mergeReport(a.project_slug, a.pr_number),
+          }, merging ? 'Mergeando…' : 'Aprovar e Mergear'),
+          a.verify_notes && React.createElement('div', { className: 'cr-attack-result__notes' }, a.verify_notes),
+          a.error && React.createElement('span', { className: 'muted', style: { marginLeft: 8 } }, a.error));
+      })(),
 
       React.createElement('div', { className: 'cr-hero' },
         React.createElement(Card, { className: 'cr-score' },
