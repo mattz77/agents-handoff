@@ -21,6 +21,7 @@ function authorized(req: http.IncomingMessage): boolean {
   const header = req.headers.authorization || "";
   if (!header.startsWith(prefix)) return false;
   const provided = header.slice(prefix.length);
+  if (!provided) return false;
   const expected = AGENT_TOKEN;
   const a = createHash("sha256").update(provided).digest();
   const b = createHash("sha256").update(expected).digest();
