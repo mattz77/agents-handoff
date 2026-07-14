@@ -141,6 +141,13 @@ export async function runAttack(opts: RunAttackOpts): Promise<{ ok: boolean; att
     const fixedDescriptions: string[] = [];
     let fixed = 0;
 
+    async function persistProgress() {
+      await pg.query(
+        `update codereview_attacks set issues_fixed = $2, log = $3 where id = $1`,
+        [attackId, fixed, JSON.stringify(log)]
+      );
+    }
+
     for (const [idx, issue] of issues.entries()) {
       const short = `${issue.file}${issue.line != null ? ":" + issue.line : ""}`;
       await setStep(attackId, `[${idx + 1}/${issues.length}] revisando ${short} com ${model}…`);
@@ -199,6 +206,10 @@ export async function runAttack(opts: RunAttackOpts): Promise<{ ok: boolean; att
       } catch (e) {
         entry.detail = (e as Error).message.slice(0, 200);
         log.push(entry);
+      }
+
+      if ((idx + 1) % 5 === 0 || idx === issues.length - 1) {
+        await persistProgress();
       }
     }
 
