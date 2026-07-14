@@ -11,7 +11,7 @@ import { runCodeReviewForSlug } from "./codereview-cron";
 let AGENT_TOKEN = process.env.AGENT_API_TOKEN || "";
 let AGENT_TOKEN_HASH = AGENT_TOKEN ? createHash("sha256").update(AGENT_TOKEN).digest() : null;
 
-/** Reatribui o token em runtime (uso interno; ex.: reload de config) e recomputa o hash. */
+/** @internal Reatribui o token em runtime (ex.: reload de config) e recomputa o hash. */
 function setAgentToken(token: string) {
   const next = token || "";
   if (next === AGENT_TOKEN) return; // idempotente: hash já é derivado do token atual
