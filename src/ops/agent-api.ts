@@ -14,7 +14,7 @@ let AGENT_TOKEN_HASH = AGENT_TOKEN ? createHash("sha256").update(AGENT_TOKEN).di
 /** Reatribui o token em runtime (uso interno; ex.: reload de config) e recomputa o hash. */
 function setAgentToken(token: string) {
   const next = token || "";
-  if (next === AGENT_TOKEN) return;
+  if (next === AGENT_TOKEN) return; // idempotente: hash já é derivado do token atual
   AGENT_TOKEN = next;
   AGENT_TOKEN_HASH = next ? createHash("sha256").update(next).digest() : null;
 }
