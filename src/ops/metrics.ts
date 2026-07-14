@@ -250,6 +250,7 @@ export async function getDlq(limit = 50) {
       dlq_at: data?._dlq_at ?? null,
       original_status: data?._dlq_original_status ?? null,
       attempt: data?.attempt ?? null,
+      payload: data ?? null,
     };
   });
 }
@@ -926,6 +927,70 @@ export async function getDockerStatus(): Promise<DockerStatus> {
   } catch {
     return { containers: [], totalRunning: 0, totalStopped: 0 };
   }
+}
+
+export interface RedisHAStatus {
+  status: "ok" | "degraded" | "unknown";
+  quorum: number;
+  master: { host: string; port: number; name?: string };
+  replicas: Array<{ host: string; port: number; state: string; name: string; lagBytes: number }>;
+  sentinels: Array<{ host: string; port: number; state: string; name: string }>;
+}
+
+const SENTINEL_NODES = [
+  { host: "sentinel-1", port: 26379 },
+  { host: "sentinel-2", port: 26379 },
+  { host: "sentinel-3", port: 26379 },
+];
+
+// ioredis não expõe SENTINEL masters/replicas/sentinels no cliente já conectado ao master
+// (esse fala com redis-master, não sentinel) — abre conexão avulsa curta a um sentinel vivo.
+export async function getRedisHA(): Promise<RedisHAStatus> {
+  const IORedisClient: any = require("ioredis");
+  for (const node of SENTINEL_NODES) {
+    let sc: any;
+    try {
+      sc = new IORedisClient({ host: node.host, port: node.port, connectTimeout: 1500, lazyConnect: true, retryStrategy: () => null });
+      await sc.connect();
+      const [masterInfo, replicas, sentinels] = await Promise.all([
+        sc.call("sentinel", "master", "mymaster") as Promise<string[]>,
+        sc.call("sentinel", "replicas", "mymaster") as Promise<string[][]>,
+        sc.call("sentinel", "sentinels", "mymaster") as Promise<string[][]>,
+      ]);
+      const kv = (arr: string[]) => { const o: Record<string, string> = {}; for (let i = 0; i < arr.length; i += 2) o[arr[i]] = arr[i + 1]; return o; };
+      const m = kv(masterInfo);
+      const quorum = Number(m["quorum"] ?? sentinels.length + 1);
+      return {
+        status: "ok",
+        quorum,
+        master: { host: m["ip"] ?? "—", port: Number(m["port"] ?? 6379), name: m["name"] ?? "mymaster" },
+        replicas: replicas.map((r) => {
+          const o = kv(r);
+          return {
+            host: o["ip"] ?? "—", port: Number(o["port"] ?? 6379),
+            state: o["master-link-status"] ?? o["flags"] ?? "unknown",
+            name: o["name"] ?? `${o["ip"] ?? "replica"}:${o["port"] ?? ""}`,
+            lagBytes: Math.max(0, Number(m["master-repl-offset"] ?? 0) - Number(o["slave-repl-offset"] ?? 0)),
+          };
+        }),
+        sentinels: (() => {
+          const others = SENTINEL_NODES.filter((n) => n.host !== node.host);
+          return [
+            { host: node.host, port: node.port, state: "connected", name: node.host },
+            ...sentinels.map((s, i) => {
+              const o = kv(s);
+              return { host: o["ip"] ?? "—", port: Number(o["port"] ?? 26379), state: (o["flags"] ?? "").includes("down") ? "down" : "connected", name: others[i]?.host ?? o["ip"] ?? "sentinel" };
+            }),
+          ];
+        })(),
+      };
+    } catch {
+      continue;
+    } finally {
+      try { sc?.disconnect(); } catch {}
+    }
+  }
+  return { status: "unknown", quorum: 0, master: { host: "—", port: 6379 }, replicas: [], sentinels: [] };
 }
 
 export interface GitActivity {

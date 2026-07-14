@@ -14,6 +14,7 @@ import {
   getBrainStatus,
   getDataLakeStats,
   getDockerStatus,
+  getRedisHA,
   getGitActivity,
   getSystemInfo,
   getHandoffTimeline,
@@ -225,6 +226,9 @@ export async function handleOpsRequest(
     }
     if (method === "GET" && path === "/ops/api/docker") {
       return json(res, 200, await getDockerStatus()), true;
+    }
+    if (method === "GET" && path === "/ops/api/redis-ha") {
+      return json(res, 200, await getRedisHA()), true;
     }
     if (method === "GET" && path === "/ops/api/git") {
       return json(res, 200, getGitActivity()), true;

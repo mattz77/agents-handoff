@@ -46,7 +46,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       React.createElement(ActionRequired, { onPickStatus }),
       // Hero
       React.createElement('div', { className: 'hero-grid' },
-        React.createElement(HandoffFlow, { animated: animatedFlow, live }),
+        React.createElement(HandoffFlow, { animated: animatedFlow, live, onDlqClick: () => onPickStatus(null, 'handoffs') }),
         React.createElement(AgentSummary, null),
       ),
       // KPIs
@@ -160,8 +160,10 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
   // ============================================================
   function HandoffsPanel({ onInspect, filter, setFilter, dlq, onReplay }) {
     const HD = window.HD;
+    const [dlqSel, setDlqSel] = React.useState(null);
     const all = filter ? HD.handoffs.filter((h) => h.lifecycle_status === filter) : HD.handoffs;
     const rows = (all || []).map((h) => ({ ...h, _onClick: () => onInspect(h) }));
+    const dlqRows = (dlq || []).map((d) => ({ ...d, _onClick: () => setDlqSel((cur) => (cur && cur.id === d.id ? null : d)) }));
 
     const hCols = [
       { label: 'Task', mono: true, render: (r) => shortId(r.task_id) },
@@ -208,8 +210,9 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
               !filter && statuses.slice(0, 4).map((s) => React.createElement('button', { key: s, className: 'fchip', onClick: () => setFilter(s) }, statusMeta(s).label))),
           }, React.createElement(DataTable, { cols: hCols, rows })),
           React.createElement(Section, { icon: 'split', title: 'Dead Letter Queue', count: dlq.length, accent: 'var(--critical)',
-            actions: React.createElement('span', { className: 'sub-note' }, 'reinjeta no stream após correção') },
-            React.createElement(DataTable, { cols: dlqCols, rows: dlq, empty: 'DLQ vazia - nada a reprocessar.' })),
+            actions: React.createElement('span', { className: 'sub-note' }, 'clique na linha pra ver a falha · replay reinjeta no stream') },
+            React.createElement(DataTable, { cols: dlqCols, rows: dlqRows, empty: 'DLQ vazia - nada a reprocessar.' }),
+            dlqSel && React.createElement(DlqDetail, { item: dlqSel, onClose: () => setDlqSel(null), onReplay: (it) => { onReplay(it); setDlqSel(null); } })),
           React.createElement(Section, { icon: 'inbox', title: 'Outbox represado', count: HD.outbox.filter((o) => o.status !== 'SENT').length, accent: 'var(--toil)' },
             React.createElement(DataTable, { cols: obCols, rows: HD.outbox })),
         ),
@@ -220,6 +223,39 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             React.createElement(StreamBlock, null)),
         ),
       ),
+    );
+  }
+
+  // Detalhe expandido de uma entrada da DLQ — motivo da falha, status original e payload completo.
+  function DlqDetail({ item, onClose, onReplay }) {
+    const meta = [
+      ['DLQ ID', item.id],
+      ['Task', item.task_id || '—'],
+      ['Correlation', item.correlation_id || '—'],
+      ['Projeto', item.project || '—'],
+      ['Status original', item.original_status || '—'],
+      ['Tentativas', item.attempt != null ? String(item.attempt) : '—'],
+      ['Entrou na DLQ', item.dlq_at ? new Date(item.dlq_at).toLocaleString('pt-BR') : '—'],
+    ];
+    return React.createElement(Card, { className: 'dlq-detail', style: { marginTop: 10, padding: 14 } },
+      React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
+        React.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 } },
+          React.createElement(Icon, { name: 'alert', size: 14 }), 'Falha na entrega'),
+        React.createElement('div', { style: { display: 'flex', gap: 6 } },
+          React.createElement(Button, { size: 'sm', onClick: () => onReplay(item) },
+            React.createElement(Icon, { name: 'replay', size: 13 }), 'Replay'),
+          React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: onClose },
+            React.createElement(Icon, { name: 'x', size: 13 })))),
+      React.createElement('div', { className: 'mono', style: { color: 'var(--critical)', marginBottom: 10, fontSize: 13 } },
+        item.reason || 'motivo não registrado'),
+      React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, marginBottom: 10 } },
+        meta.map(([k, v], i) => React.createElement('div', { key: i },
+          React.createElement('div', { className: 'muted', style: { fontSize: 11 } }, k),
+          React.createElement('div', { className: 'mono', style: { fontSize: 12, wordBreak: 'break-all' } }, v)))),
+      item.payload && React.createElement('details', null,
+        React.createElement('summary', { className: 'muted', style: { cursor: 'pointer', fontSize: 12 } }, 'Payload completo'),
+        React.createElement('pre', { className: 'mono', style: { fontSize: 11, overflowX: 'auto', maxHeight: 260, marginTop: 6, padding: 8, background: 'rgb(0 0 0 / 0.25)', borderRadius: 6 } },
+          JSON.stringify(item.payload, null, 2))),
     );
   }
 
@@ -381,7 +417,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
               React.createElement(StatusBadge, { status: c.status === 'running' ? 'good' : 'critical' }, c.status === 'running' ? 'up' : 'down'))))),
         React.createElement('div', { className: 'col' },
           React.createElement(Section, { icon: 'radio', title: 'Redis HA · Sentinel', accent: 'var(--copper)',
-            actions: React.createElement(StatusBadge, { status: 'good' }, 'quorum ' + r.quorum) },
+            actions: React.createElement(StatusBadge, { status: r.status === 'ok' && r.quorum > 0 ? 'good' : 'critical' }, r.status === 'ok' ? 'quorum ' + r.quorum : 'indisponível') },
             React.createElement(RedisTopology, { ha: r })),
           React.createElement(Section, { icon: 'bell', title: 'Alertas operacionais', count: HD.alerts.length, accent: 'var(--toil)' },
             React.createElement(AlertsList, { alerts: HD.alerts })),
