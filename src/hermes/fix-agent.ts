@@ -200,7 +200,6 @@ export async function runAttack(opts: RunAttackOpts): Promise<{ ok: boolean; att
         entry.detail = (e as Error).message.slice(0, 200);
         log.push(entry);
       }
-      await pg.query(`update codereview_attacks set issues_fixed = $2, log = $3 where id = $1`, [attackId, fixed, JSON.stringify(log)]);
     }
 
     if (fixed === 0) {
