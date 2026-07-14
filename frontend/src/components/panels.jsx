@@ -720,6 +720,12 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const [selected, setSelected] = React.useState(0);
     const [projectFilter, setProjectFilter] = React.useState('');
     const [taskState, setTaskState] = React.useState({}); // issue key -> 'creating'|'done'|'error'
+    const [models, setModels] = React.useState([]);
+    const [recommended, setRecommended] = React.useState({ review: [], fix: [] });
+    const [modelSel, setModelSel] = React.useState(''); // '' = usa o default do projeto/env
+    const [runError, setRunError] = React.useState('');
+    const [attacks, setAttacks] = React.useState([]);
+    const [attacking, setAttacking] = React.useState(false);
 
     const load = React.useCallback(() => {
       return fetch('/ops/api/codereview')
@@ -728,16 +734,63 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         .catch(err => { console.error('Failed to fetch code review data', err); setLoading(false); });
     }, []);
 
-    React.useEffect(() => { load(); }, [load]);
+    const loadAttacks = React.useCallback(() => {
+      return fetch('/ops/api/codereview/attacks')
+        .then(r => r.json())
+        .then(d => {
+          const list = Array.isArray(d.attacks) ? d.attacks : [];
+          setAttacks(list);
+          return list;
+        })
+        .catch(() => []);
+    }, []);
+
+    React.useEffect(() => { load(); loadAttacks(); }, [load, loadAttacks]);
+    React.useEffect(() => {
+      fetch('/ops/api/codereview/models').then(r => r.json())
+        .then(d => {
+          setModels(Array.isArray(d.models) ? d.models : []);
+          if (d.recommended) setRecommended(d.recommended);
+        })
+        .catch(() => {});
+    }, []);
+
+    // Enquanto houver ataque running, polla a cada 5s (progresso vem do log jsonb).
+    React.useEffect(() => {
+      if (!attacks.some(a => a.status === 'running')) return;
+      const t = setInterval(() => {
+        loadAttacks().then(list => {
+          if (!list.some(a => a.status === 'running')) { setAttacking(false); load(); }
+        });
+      }, 5000);
+      return () => clearInterval(t);
+    }, [attacks, loadAttacks, load]);
 
     const runNow = () => {
       setRunning(true);
-      const body = projectFilter ? JSON.stringify({ slug: projectFilter }) : '{}';
+      setRunError('');
+      const body = JSON.stringify({ ...(projectFilter ? { slug: projectFilter } : {}), ...(modelSel ? { model: modelSel } : {}) });
       fetch('/ops/api/codereview/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
         .then(res => res.json())
-        .then(() => load())
-        .catch(err => console.error('Failed to trigger code review', err))
+        .then((r) => { if (r && r.ok === false) setRunError(r.error || 'falha desconhecida'); return load(); })
+        .catch(err => { console.error('Failed to trigger code review', err); setRunError(String(err)); })
         .finally(() => setRunning(false));
+    };
+
+    const attackNow = (report) => {
+      if (!report || attacking) return;
+      setAttacking(true);
+      setRunError('');
+      fetch('/ops/api/codereview/attack', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: report.project_slug, reportId: report.id, ...(modelSel ? { model: modelSel } : {}) }),
+      })
+        .then(async (r) => {
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok || data.error) { setRunError(data.error || `HTTP ${r.status}`); setAttacking(false); }
+          return loadAttacks();
+        })
+        .catch(err => { setRunError(String(err)); setAttacking(false); });
     };
 
     const createTask = (report, issue, key) => {
@@ -808,8 +861,46 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             key: p, className: cls('fchip', projectFilter === p && 'fchip--on'),
             onClick: () => { setProjectFilter(p); setSelected(0); },
           }, p))),
-        React.createElement('button', { className: 'cb-btn', onClick: runNow, disabled: running },
-          running ? 'Executando…' : projectFilter ? `Rodar review — ${projectFilter}` : 'Rodar review agora')),
+        React.createElement('div', { className: 'cr-toolbar__run' },
+          models.length > 0 && React.createElement('select', {
+            className: 'cr-model-select', value: modelSel, onChange: (e) => setModelSel(e.target.value),
+            title: 'Modelo NVIDIA NIM. ◆ = indicado pra review de código, ▲ = indicado pra implementar fixes (Atacar PR).',
+          },
+            React.createElement('option', { value: '' }, 'Modelo padrão'),
+            (recommended.review || []).filter(m => models.includes(m)).length > 0 &&
+              React.createElement('optgroup', { label: '◆ Indicados — Review' },
+                (recommended.review || []).filter(m => models.includes(m)).map(m =>
+                  React.createElement('option', { key: 'r-' + m, value: m, className: 'opt-rec-review' }, '◆ ' + m))),
+            (recommended.fix || []).filter(m => models.includes(m)).length > 0 &&
+              React.createElement('optgroup', { label: '▲ Indicados — Fix / Atacar PR' },
+                (recommended.fix || []).filter(m => models.includes(m)).map(m =>
+                  React.createElement('option', { key: 'f-' + m, value: m, className: 'opt-rec-fix' }, '▲ ' + m))),
+            React.createElement('optgroup', { label: 'Todos os modelos' },
+              models.map(m => React.createElement('option', { key: m, value: m }, m)))),
+          React.createElement('button', { className: 'cb-btn', onClick: runNow, disabled: running },
+            running ? 'Executando…' : projectFilter ? `Rodar review — ${projectFilter}` : 'Rodar review agora'),
+          React.createElement('button', {
+            className: 'cb-btn cb-btn--attack', onClick: () => attackNow(latest),
+            disabled: attacking || !latest || issues.length === 0 || attacks.some(a => a.status === 'running' && a.project_slug === latest.project_slug),
+            title: 'Daemon-FixAgent corrige as issues deste report uma a uma e abre um PR de correção; ao final o review roda de novo sobre esse PR (ciclo).',
+          }, attacking ? 'Atacando…' : 'Atacar PR'))),
+      runError && React.createElement('div', { className: 'alert cr-run-error' },
+        React.createElement(Icon, { name: 'alert', size: 14 }), ' ', runError),
+      attacks.length > 0 && (attacks[0].status === 'running' || attacking) && React.createElement(Card, { className: 'cr-attack' },
+        React.createElement('div', { className: 'cr-attack__head' },
+          React.createElement('span', { className: 'cr-attack__title' },
+            React.createElement(Icon, { name: 'zap', size: 14 }), ' Ataque em curso — ', attacks[0].project_slug),
+          React.createElement('span', { className: 'mono' }, (attacks[0].issues_fixed || 0) + '/' + (attacks[0].issues_total || 0) + ' corrigidas')),
+        React.createElement('div', { className: 'cr-attack__bar' },
+          React.createElement('span', { style: { width: Math.round(100 * (attacks[0].issues_fixed || 0) / Math.max(attacks[0].issues_total || 1, 1)) + '%' } })),
+        Array.isArray(attacks[0].log) && attacks[0].log.slice(-3).map((l, i) =>
+          React.createElement('div', { key: i, className: 'cr-attack__log mono' },
+            `[${l.status}] ${l.file}${l.line != null ? ':' + l.line : ''} — ${l.detail}`))),
+      attacks.length > 0 && attacks[0].status !== 'running' && !attacking && React.createElement('div', { className: cls('alert cr-attack-result', attacks[0].status === 'done' ? 'cr-attack-result--ok' : 'cr-attack-result--fail') },
+        React.createElement(Icon, { name: attacks[0].status === 'done' ? 'check' : 'alert', size: 14 }),
+        ' Último ataque: ', attacks[0].issues_fixed + '/' + attacks[0].issues_total + ' corrigidas',
+        attacks[0].pr_url && React.createElement('a', { href: attacks[0].pr_url, target: '_blank', rel: 'noreferrer', style: { marginLeft: 8 } }, 'ver PR'),
+        attacks[0].error && React.createElement('span', { className: 'muted', style: { marginLeft: 8 } }, attacks[0].error)),
 
       React.createElement('div', { className: 'cr-hero' },
         React.createElement(Card, { className: 'cr-score' },

@@ -15,6 +15,7 @@ export interface NimChatMessage {
 export interface NimChatOptions {
   jsonMode?: boolean;
   temperature?: number;
+  model?: string;
 }
 
 async function chatOnce(messages: NimChatMessage[], opts: NimChatOptions): Promise<string> {
@@ -22,7 +23,7 @@ async function chatOnce(messages: NimChatMessage[], opts: NimChatOptions): Promi
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const body: Record<string, unknown> = {
-      model: MODEL,
+      model: opts.model || MODEL,
       messages,
       temperature: opts.temperature ?? 0.2,
       max_tokens: MAX_TOKENS,
@@ -70,6 +71,21 @@ export async function nimChat(messages: NimChatMessage[], opts: NimChatOptions =
     }
   }
   throw lastErr;
+}
+
+let modelsCache: { at: number; ids: string[] } | null = null;
+const MODELS_CACHE_TTL_MS = 10 * 60_000;
+
+/** Lista os modelos de chat disponíveis no catálogo NVIDIA NIM (cache de 10min). */
+export async function listNimModels(): Promise<string[]> {
+  if (modelsCache && Date.now() - modelsCache.at < MODELS_CACHE_TTL_MS) return modelsCache.ids;
+  if (!API_KEY) throw new Error("LINTER_API_KEY não configurado no .env");
+  const res = await fetch(`${BASE_URL}/models`, { headers: { Authorization: `Bearer ${API_KEY}` } });
+  if (!res.ok) throw new Error(`NIM HTTP ${res.status} ao listar modelos`);
+  const data = await res.json();
+  const ids: string[] = Array.isArray(data?.data) ? data.data.map((m: any) => m.id).sort() : [];
+  modelsCache = { at: Date.now(), ids };
+  return ids;
 }
 
 /** Extrai o JSON de uma resposta de modelo de reasoning (strip <think>, cercas markdown, texto solto). */

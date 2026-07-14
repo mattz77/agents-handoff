@@ -478,6 +478,23 @@ body { margin: 0; background: var(--background); color: var(--foreground); }
 
 /* Code Review v2 */
 .cr-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.cr-toolbar__run{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cr-model-select{background:var(--panel-bg,#141414);color:var(--fg);border:1px solid var(--border,#2a2a2a);border-radius:6px;padding:6px 10px;font-size:12px;max-width:240px}
+.cr-model-select option.opt-rec-review{color:var(--info)}
+.cr-model-select option.opt-rec-fix{color:var(--copper,var(--brand-accent))}
+.cr-run-error{margin-top:8px;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--critical)}
+.cb-btn--attack{border-color:var(--critical);color:var(--critical)}
+.cb-btn--attack:hover:not(:disabled){background:color-mix(in srgb,var(--critical) 14%,transparent)}
+.cb-btn--attack:disabled{opacity:.45}
+.cr-attack{padding:var(--card-pad);display:flex;flex-direction:column;gap:8px}
+.cr-attack__head{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+.cr-attack__title{display:inline-flex;align-items:center;gap:6px;font-weight:600}
+.cr-attack__bar{height:6px;border-radius:3px;background:var(--border,#2a2a2a);overflow:hidden}
+.cr-attack__bar span{display:block;height:100%;background:var(--copper,var(--brand-accent));transition:width .5s ease}
+.cr-attack__log{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cr-attack-result{margin-top:8px;display:flex;align-items:center;gap:6px;font-size:12px}
+.cr-attack-result--ok{color:var(--good)}
+.cr-attack-result--fail{color:var(--warning)}
 .cr-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--panel-gap);align-items:stretch}
 @media (max-width:880px){.cr-hero{grid-template-columns:1fr}}
 .cr-score{padding:var(--card-pad);display:flex;align-items:center;gap:18px}
