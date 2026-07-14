@@ -25,7 +25,7 @@ function json(res: http.ServerResponse, code: number, body: unknown) {
 }
 
 function authorized(req: http.IncomingMessage): boolean {
-  if (!AGENT_TOKEN_HASH) return false; // sem token, API desligada (fail-closed)
+  if (!AGENT_TOKEN_HASH) return false; // sem hash => sem token => API desligada (fail-closed)
   const PREFIX = "Bearer ";
   const header = req.headers.authorization || "";
   if (!header.startsWith(PREFIX)) return false;
