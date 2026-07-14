@@ -1,5 +1,5 @@
 import http from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { pg } from "../infra/postgres";
 import { getBrainStatus } from "./metrics";
 import { getCodeReviewData } from "./codereview-data";
@@ -22,9 +22,9 @@ function authorized(req: http.IncomingMessage): boolean {
   if (!header.startsWith(prefix)) return false;
   const provided = header.slice(prefix.length);
   const expected = AGENT_TOKEN;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+  const a = createHash("sha256").update(provided).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
