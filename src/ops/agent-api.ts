@@ -9,6 +9,7 @@ import { runCodeReviewForSlug } from "./codereview-cron";
 // Fica fora de /ops/api/* de propósito: aquele prefixo é gated pelo Cloudflare Access (JWT de
 // browser), que bots não têm. Aqui a auth é Bearer token fixo (AGENT_API_TOKEN no .env).
 const AGENT_TOKEN = process.env.AGENT_API_TOKEN || "";
+const AGENT_TOKEN_HASH = AGENT_TOKEN ? createHash("sha256").update(AGENT_TOKEN).digest() : null;
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
@@ -22,10 +23,8 @@ function authorized(req: http.IncomingMessage): boolean {
   if (!header.startsWith(prefix)) return false;
   const provided = header.slice(prefix.length);
   if (!provided) return false;
-  const expected = AGENT_TOKEN;
   const a = createHash("sha256").update(provided).digest();
-  const b = createHash("sha256").update(expected).digest();
-  return timingSafeEqual(a, b);
+  return timingSafeEqual(a, AGENT_TOKEN_HASH!);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
