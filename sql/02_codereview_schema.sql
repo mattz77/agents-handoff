@@ -10,8 +10,19 @@ CREATE TABLE IF NOT EXISTS handoff_projects (
   git_repo      TEXT,
   default_branch TEXT DEFAULT 'main',
   codereview_enabled BOOLEAN DEFAULT TRUE,
-  codereview_schedule TEXT DEFAULT '23:45',       -- HH:MM BRT
+  codereview_auto BOOLEAN DEFAULT FALSE,          -- entra no cron diário; false = só review manual
+  codereview_schedule TEXT DEFAULT '02:00',       -- HH:MM BRT
   created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Migration idempotente pra bancos já criados sem a coluna:
+ALTER TABLE handoff_projects ADD COLUMN IF NOT EXISTS codereview_auto BOOLEAN DEFAULT FALSE;
+ALTER TABLE handoff_projects ALTER COLUMN codereview_schedule SET DEFAULT '02:00';
+
+CREATE TABLE IF NOT EXISTS handoff_settings (
+  key           TEXT PRIMARY KEY,
+  value         TEXT,
   updated_at    TIMESTAMPTZ DEFAULT NOW()
 );
 

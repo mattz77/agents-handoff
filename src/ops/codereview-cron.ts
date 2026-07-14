@@ -52,13 +52,13 @@ export async function runCodeReviewForSlug(slug: string) {
 
 // Agendador nativo: checa a cada minuto se algum projeto bate com seu horário configurado.
 export function startCodeReviewCron() {
-  console.log("🕒 Cron de Code Review (Minimax M3) iniciado.");
+  console.log("🕒 Cron de Code Review (Daemon-CodeReview) iniciado.");
   setInterval(async () => {
     try {
       const now = new Date();
       const { rows } = await pg.query<ProjectRow & { codereview_schedule: string }>(
         `select slug, display_name, local_path, git_provider, git_owner, git_repo, default_branch, codereview_schedule
-         from handoff_projects where codereview_enabled = true`
+         from handoff_projects where codereview_enabled = true and codereview_auto = true`
       );
       const due = rows.filter((p) => matchesSchedule(p.slug, p.codereview_schedule, now));
       await Promise.allSettled(due.map((p) => runCodeReviewForProject(p)));

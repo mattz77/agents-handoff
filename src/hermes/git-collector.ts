@@ -1,8 +1,8 @@
 import { execSync } from "node:child_process";
 import { stripSensitiveDiffSections, isSensitivePath } from "../shared/redact";
+import { getGithubToken } from "../infra/postgres";
 
 const MAX_DIFF_CHARS = Number(process.env.CODEREVIEW_MAX_DIFF_CHARS || 80_000);
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
 
 export interface ProjectRow {
   slug: string;
@@ -55,9 +55,10 @@ function collectLocal(project: ProjectRow): GitCollectResult {
 }
 
 async function githubApi(path: string): Promise<any> {
+  const token = await getGithubToken();
   const res = await fetch(`https://api.github.com${path}`, {
     headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
     },
   });
@@ -66,9 +67,10 @@ async function githubApi(path: string): Promise<any> {
 }
 
 async function githubDiff(path: string): Promise<string> {
+  const token = await getGithubToken();
   const res = await fetch(`https://api.github.com${path}`, {
     headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github.v3.diff",
     },
   });
@@ -84,8 +86,11 @@ async function collectGithub(project: ProjectRow): Promise<GitCollectResult> {
 
   if (pr) {
     const head = pr.head.ref;
-    const compare = await githubApi(`/repos/${owner}/${repo}/compare/${base}...${head}`);
-    const diff = await githubDiff(`/repos/${owner}/${repo}/compare/${base}...${head}`);
+    // Base do compare vem do próprio PR — o default_branch do registry pode divergir
+    // (ex: repo com default trocado, PR apontando pra outra base).
+    const prBase = pr.base?.ref || base;
+    const compare = await githubApi(`/repos/${owner}/${repo}/compare/${prBase}...${head}`);
+    const diff = await githubDiff(`/repos/${owner}/${repo}/compare/${prBase}...${head}`);
     return {
       commitSha: compare?.commits?.slice(-1)?.[0]?.sha || head,
       branch: head,
@@ -117,8 +122,9 @@ export async function collectGitContext(project: ProjectRow): Promise<GitCollect
   switch (project.git_provider) {
     case "local":
       return collectLocal(project);
-    case "github":
-      if (!GITHUB_TOKEN) {
+    case "github": {
+      const token = await getGithubToken();
+      if (!token) {
         if (!project.local_path) {
           throw new Error(`GITHUB_TOKEN vazio e projeto "${project.slug}" sem local_path — não há como coletar diff`);
         }
@@ -126,6 +132,7 @@ export async function collectGitContext(project: ProjectRow): Promise<GitCollect
         return collectLocal(project);
       }
       return collectGithub(project);
+    }
     default:
       throw new Error(`git_provider "${project.git_provider}" não suportado ainda`);
   }

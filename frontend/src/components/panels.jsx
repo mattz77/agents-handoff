@@ -46,7 +46,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       React.createElement(ActionRequired, { onPickStatus }),
       // Hero
       React.createElement('div', { className: 'hero-grid' },
-        React.createElement(HandoffFlow, { animated: animatedFlow, live }),
+        React.createElement(HandoffFlow, { animated: animatedFlow, live, onDlqClick: () => onPickStatus(null, 'handoffs') }),
         React.createElement(AgentSummary, null),
       ),
       // KPIs
@@ -160,8 +160,10 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
   // ============================================================
   function HandoffsPanel({ onInspect, filter, setFilter, dlq, onReplay }) {
     const HD = window.HD;
+    const [dlqSel, setDlqSel] = React.useState(null);
     const all = filter ? HD.handoffs.filter((h) => h.lifecycle_status === filter) : HD.handoffs;
     const rows = (all || []).map((h) => ({ ...h, _onClick: () => onInspect(h) }));
+    const dlqRows = (dlq || []).map((d) => ({ ...d, _onClick: () => setDlqSel((cur) => (cur && cur.id === d.id ? null : d)) }));
 
     const hCols = [
       { label: 'Task', mono: true, render: (r) => shortId(r.task_id) },
@@ -208,8 +210,9 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
               !filter && statuses.slice(0, 4).map((s) => React.createElement('button', { key: s, className: 'fchip', onClick: () => setFilter(s) }, statusMeta(s).label))),
           }, React.createElement(DataTable, { cols: hCols, rows })),
           React.createElement(Section, { icon: 'split', title: 'Dead Letter Queue', count: dlq.length, accent: 'var(--critical)',
-            actions: React.createElement('span', { className: 'sub-note' }, 'reinjeta no stream após correção') },
-            React.createElement(DataTable, { cols: dlqCols, rows: dlq, empty: 'DLQ vazia - nada a reprocessar.' })),
+            actions: React.createElement('span', { className: 'sub-note' }, 'clique na linha pra ver a falha · replay reinjeta no stream') },
+            React.createElement(DataTable, { cols: dlqCols, rows: dlqRows, empty: 'DLQ vazia - nada a reprocessar.' }),
+            dlqSel && React.createElement(DlqDetail, { item: dlqSel, onClose: () => setDlqSel(null), onReplay: (it) => { onReplay(it); setDlqSel(null); } })),
           React.createElement(Section, { icon: 'inbox', title: 'Outbox represado', count: HD.outbox.filter((o) => o.status !== 'SENT').length, accent: 'var(--toil)' },
             React.createElement(DataTable, { cols: obCols, rows: HD.outbox })),
         ),
@@ -220,6 +223,39 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             React.createElement(StreamBlock, null)),
         ),
       ),
+    );
+  }
+
+  // Detalhe expandido de uma entrada da DLQ — motivo da falha, status original e payload completo.
+  function DlqDetail({ item, onClose, onReplay }) {
+    const meta = [
+      ['DLQ ID', item.id],
+      ['Task', item.task_id || '—'],
+      ['Correlation', item.correlation_id || '—'],
+      ['Projeto', item.project || '—'],
+      ['Status original', item.original_status || '—'],
+      ['Tentativas', item.attempt != null ? String(item.attempt) : '—'],
+      ['Entrou na DLQ', item.dlq_at ? new Date(item.dlq_at).toLocaleString('pt-BR') : '—'],
+    ];
+    return React.createElement(Card, { className: 'dlq-detail', style: { marginTop: 10, padding: 14 } },
+      React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 } },
+        React.createElement('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600 } },
+          React.createElement(Icon, { name: 'alert', size: 14 }), 'Falha na entrega'),
+        React.createElement('div', { style: { display: 'flex', gap: 6 } },
+          React.createElement(Button, { size: 'sm', onClick: () => onReplay(item) },
+            React.createElement(Icon, { name: 'replay', size: 13 }), 'Replay'),
+          React.createElement(Button, { variant: 'ghost', size: 'sm', onClick: onClose },
+            React.createElement(Icon, { name: 'x', size: 13 })))),
+      React.createElement('div', { className: 'mono', style: { color: 'var(--critical)', marginBottom: 10, fontSize: 13 } },
+        item.reason || 'motivo não registrado'),
+      React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, marginBottom: 10 } },
+        meta.map(([k, v], i) => React.createElement('div', { key: i },
+          React.createElement('div', { className: 'muted', style: { fontSize: 11 } }, k),
+          React.createElement('div', { className: 'mono', style: { fontSize: 12, wordBreak: 'break-all' } }, v)))),
+      item.payload && React.createElement('details', null,
+        React.createElement('summary', { className: 'muted', style: { cursor: 'pointer', fontSize: 12 } }, 'Payload completo'),
+        React.createElement('pre', { className: 'mono', style: { fontSize: 11, overflowX: 'auto', maxHeight: 260, marginTop: 6, padding: 8, background: 'rgb(0 0 0 / 0.25)', borderRadius: 6 } },
+          JSON.stringify(item.payload, null, 2))),
     );
   }
 
@@ -264,33 +300,58 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const activeAgent = window.HD.normalizeAgentId(b.activeModel);
     const tone = { done: 'good', in_progress: 'info', pending: 'toil', blocked: 'critical' };
     const tlabel = { done: 'Concluída', in_progress: 'Em progresso', pending: 'Pendente', blocked: 'Bloqueada' };
+    const prioRail = (p) => p === 'P0' || p === 'alta' ? 'critical' : p === 'P1' || p === 'média' ? 'warning' : 'neutral';
     const taskCols = [
-      { label: 'Tarefa', render: (r) => r.title },
+      { label: 'Tarefa', render: (r) => React.createElement('span', { className: 'brain-task' },
+        React.createElement('span', { className: cls('brain-task__rail', 'tone-bg-' + (prioRail(r.priority) === 'neutral' ? 'good' : prioRail(r.priority))) }),
+        r.title) },
       { label: 'Status', render: (r) => React.createElement(StatusBadge, { status: tone[r.status] }, tlabel[r.status]) },
       { label: 'Responsável', render: (r) => React.createElement(AgentTag, { id: window.HD.normalizeAgentId(r.assigned) }) },
       { label: 'Prio', mono: true, align: 'right', render: (r) => React.createElement(Badge, { variant: r.priority === 'P0' ? 'accent' : 'outline', mono: true }, r.priority) },
     ];
-    return React.createElement('div', { className: 'panel animate-fade-up' },
+
+    const done = Number(b.completedTasks) || 0;
+    const pend = Number(b.pendingTasks) || 0;
+    const blocked = Number(b.blockedTasks) || 0;
+    const total = done + pend + blocked || 1;
+    const segs = [
+      ['good', done, 'concluídas'],
+      ['toil', pend, 'pendentes'],
+      ['critical', blocked, 'bloqueadas'],
+    ];
+
+    return React.createElement('div', { className: 'panel animate-fade-up stagger' },
       React.createElement('div', { className: 'brain-hero' },
-        React.createElement(Card, { className: 'brain-active' },
+        React.createElement(Card, { className: 'brain-active brain-active--v2' },
           React.createElement('div', { className: 'brain-active__l' },
-            React.createElement(AgentMark, { agent: agentOf(activeAgent), size: 44, active: true }),
-            React.createElement('div', null,
+            React.createElement(AgentMark, { agent: agentOf(activeAgent), size: 48, active: true }),
+            React.createElement('div', { style: { minWidth: 0 } },
+              React.createElement('div', { className: 'brain-active__eyebrow' }, 'Modelo ativo · cérebro compartilhado'),
               React.createElement('div', { className: 'brain-active__model' }, b.activeModel),
               React.createElement('div', { className: 'brain-active__task' }, React.createElement('span', { className: 'muted' }, 'Tarefa atual: '), b.currentTask))),
           React.createElement('div', { className: 'brain-active__r' },
             React.createElement(StatusBadge, { status: 'good' }, 'infra ' + b.infraHealth),
-            React.createElement('span', { className: 'brain-active__sync mono' }, 'sync ' + fmtAgo(b.lastSync)))),
+            React.createElement('span', { className: 'brain-active__sync mono' }, 'sync ' + fmtAgo(b.lastSync)),
+            React.createElement('div', { className: 'brain-progress' },
+              React.createElement('div', { className: 'brain-progress__bar' },
+                segs.map(([t, n], i) => n > 0 && React.createElement('span', {
+                  key: i, className: 'tone-bg-' + t, style: { width: (n / total * 100) + '%' },
+                }))),
+              React.createElement('div', { className: 'brain-progress__legend mono' },
+                segs.map(([t, n, lbl], i) => React.createElement('span', { key: i, className: 'tone-' + t }, n.toLocaleString('pt-BR') + ' ' + lbl)))))),
         React.createElement('div', { className: 'brain-stats' },
-          [['Pendentes', b.pendingTasks, 'toil'], ['Concluídas', b.completedTasks.toLocaleString('pt-BR'), 'good'], ['Bloqueadas', b.blockedTasks, 'critical']].map(([k, v, t], i) =>
-            React.createElement(Card, { key: i, className: 'brain-stat' },
+          [['Pendentes', pend, 'toil', 'clock'], ['Concluídas', done.toLocaleString('pt-BR'), 'good', 'check'], ['Bloqueadas', blocked, 'critical', 'alert']].map(([k, v, t, icon], i) =>
+            React.createElement(Card, { key: i, className: 'brain-stat brain-stat--v2' },
+              React.createElement('span', { className: cls('brain-stat__icon', 'tone-' + t) }, React.createElement(Icon, { name: icon, size: 15 })),
               React.createElement('span', { className: 'brain-stat__k' }, k),
               React.createElement('span', { className: cls('brain-stat__v mono', 'tone-' + t) }, v)))),
       ),
       React.createElement('div', { className: 'grid-2' },
-        React.createElement(Section, { icon: 'list', title: 'Fila de tarefas', count: b.taskList.length },
+        React.createElement(Section, { icon: 'list', title: 'Fila de tarefas', count: b.taskList.length,
+          actions: React.createElement('span', { className: 'sub-note mono' }, 'task-queue.md') },
           React.createElement(DataTable, { cols: taskCols, rows: b.taskList })),
-        React.createElement(Section, { icon: 'gitCommit', title: 'Decisões recentes', count: b.recentDecisions.length },
+        React.createElement(Section, { icon: 'gitCommit', title: 'Decisões recentes', count: b.recentDecisions.length,
+          actions: React.createElement('span', { className: 'sub-note mono' }, 'decisions.md') },
           React.createElement(DecisionTimeline, { decisions: b.recentDecisions })),
       ),
     );
@@ -314,6 +375,44 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
   // ============================================================
   // INFRA
   // ============================================================
+  function GithubTokenSection() {
+    const [status, setStatus] = React.useState(null);
+    const [token, setToken] = React.useState('');
+    const [saving, setSaving] = React.useState(false);
+
+    const refresh = () => {
+      fetch('/ops/api/settings/github-token')
+        .then(r => r.json())
+        .then(setStatus)
+        .catch(() => setStatus({ configured: false, source: 'none' }));
+    };
+    React.useEffect(() => { refresh(); }, []);
+
+    const save = (e) => {
+      e.preventDefault();
+      if (!token.trim()) return;
+      setSaving(true);
+      fetch('/ops/api/settings/github-token', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim() })
+      }).then(() => { setToken(''); setSaving(false); refresh(); })
+        .catch(() => setSaving(false));
+    };
+
+    return React.createElement(Section, { icon: 'shield', title: 'GitHub PAT (global)', accent: 'var(--copper)',
+        actions: status && React.createElement(StatusBadge, { status: status.configured ? 'good' : 'critical' },
+          status.configured ? 'configurado (' + status.source + ')' : 'não configurado') },
+      React.createElement('form', { onSubmit: save, style: { display: 'flex', gap: 8, padding: 12 } },
+        React.createElement('input', {
+          className: 'cb-input', type: 'password', placeholder: 'ghp_... (novo token)',
+          value: token, onChange: e => setToken(e.target.value), style: { flex: 1 }
+        }),
+        React.createElement(Button, { size: 'sm', type: 'submit', disabled: saving || !token.trim() }, saving ? 'Salvando...' : 'Salvar')
+      )
+    );
+  }
+
   function InfraPanel() {
     const HD = window.HD, s = HD.system, d = HD.docker, r = HD.redisHA;
     const memPct = Math.round(s.memoryUsedMB / s.memoryTotalMB * 100);
@@ -325,6 +424,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       ['Plataforma', s.platform],
     ];
     return React.createElement('div', { className: 'panel animate-fade-up' },
+      React.createElement(GithubTokenSection),
       React.createElement(Section, { icon: 'cpu', title: 'Sistema', bodyClass: 'sys-body' },
         React.createElement('div', { className: 'sysbar' },
           (sysItems || []).map(([k, v, pct, kind], i) => React.createElement('div', { key: i, className: 'sysbar__item' },
@@ -342,7 +442,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
               React.createElement(StatusBadge, { status: c.status === 'running' ? 'good' : 'critical' }, c.status === 'running' ? 'up' : 'down'))))),
         React.createElement('div', { className: 'col' },
           React.createElement(Section, { icon: 'radio', title: 'Redis HA · Sentinel', accent: 'var(--copper)',
-            actions: React.createElement(StatusBadge, { status: 'good' }, 'quorum ' + r.quorum) },
+            actions: React.createElement(StatusBadge, { status: r.status === 'ok' && r.quorum > 0 ? 'good' : 'critical' }, r.status === 'ok' ? 'quorum ' + r.quorum : 'indisponível') },
             React.createElement(RedisTopology, { ha: r })),
           React.createElement(Section, { icon: 'bell', title: 'Alertas operacionais', count: HD.alerts.length, accent: 'var(--toil)' },
             React.createElement(AlertsList, { alerts: HD.alerts })),
@@ -399,7 +499,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       { label: 'Atualizado', muted: true, align: 'right', nowrap: true, render: (r) => ago(r.updated) },
     ];
 
-    return React.createElement('div', { className: 'panel animate-fade-up' },
+    return React.createElement('div', { className: 'panel animate-fade-up stagger' },
       React.createElement('div', { className: 'dl-hero' },
         React.createElement(DlMount, { dl }),
         React.createElement(DlGauge, { dl, pct }),
@@ -471,12 +571,21 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
 
   function DlGauge({ dl, pct }) {
     const R = 52, C = 2 * Math.PI * R, dash = C * pct / 100;
+    const kSize = (dl.knowledge || []).reduce((a, k) => a + (k.sizeMB || 0), 0);
+    const pSize = (dl.projects || []).reduce((a, p) => a + (p.sizeMB || 0), 0);
+    const bSize = (dl.backups || []).reduce((a, b) => a + (b.sizeMB || 0), 0);
+    const catTotal = kSize + pSize + bSize || 1;
+    const cats = [
+      ['Knowledge', kSize, 'var(--copper)'],
+      ['Projetos', pSize, 'var(--info)'],
+      ['Backups', bSize, 'var(--good)'],
+    ];
     return React.createElement(Card, { className: 'dl-gauge' },
       React.createElement('div', { className: 'dl-gauge__ring' },
         React.createElement('svg', { width: 132, height: 132, viewBox: '0 0 132 132' },
           React.createElement('circle', { cx: 66, cy: 66, r: R, fill: 'none', stroke: 'var(--muted)', strokeWidth: 11 }),
           React.createElement('circle', { cx: 66, cy: 66, r: R, fill: 'none', stroke: 'var(--copper)', strokeWidth: 11, strokeLinecap: 'round',
-            strokeDasharray: dash + ' ' + C, transform: 'rotate(-90 66 66)' })),
+            strokeDasharray: dash + ' ' + C, transform: 'rotate(-90 66 66)', className: 'dl-gauge__arc' })),
         React.createElement('div', { className: 'dl-gauge__center' },
           React.createElement('span', { className: 'dl-gauge__pct mono' }, pct + '%'),
           React.createElement('span', { className: 'dl-gauge__lbl' }, 'em uso'))),
@@ -490,6 +599,12 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         React.createElement('div', { className: 'dl-gauge__row' },
           React.createElement('span', { className: 'dl-gauge__k' }, 'Livre'),
           React.createElement('span', { className: 'dl-gauge__v mono tone-good' }, fmtSize(dl.capacityMB - dl.usedMB)))),
+      React.createElement('div', { className: 'dl-cats' },
+        React.createElement('div', { className: 'dl-cats__bar' },
+          cats.map(([, n, c], i) => n > 0 && React.createElement('span', { key: i, style: { width: (n / catTotal * 100) + '%', background: c } }))),
+        React.createElement('div', { className: 'dl-cats__legend' },
+          cats.map(([k, n, c], i) => React.createElement('span', { key: i, className: 'dl-cats__item' },
+            React.createElement('i', { style: { background: c } }), k + ' ', React.createElement('b', { className: 'mono' }, fmtSize(n)))))),
     );
   }
 
@@ -584,6 +699,20 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
   // Consome /ops/api/codereview (Postgres: codereview_reports + handoff_projects — TASK 37/38).
   // Report: { project_slug, display_name, commit_sha, score, summary, issues[], refactors[], pr_url, model_used, created_at }
   // Issue: { file, line, severity: critical|warning|info, category, message, suggestion }
+  // Anel de score 0-10 (mesma linguagem visual do gauge do DataLake).
+  function ScoreRing({ score, tone }) {
+    const R = 44, C = 2 * Math.PI * R;
+    const pct = score == null ? 0 : Math.max(0, Math.min(score / 10, 1));
+    return React.createElement('div', { className: 'cr-ring' },
+      React.createElement('svg', { width: 112, height: 112, viewBox: '0 0 112 112' },
+        React.createElement('circle', { cx: 56, cy: 56, r: R, fill: 'none', stroke: 'var(--muted)', strokeWidth: 10 }),
+        React.createElement('circle', { cx: 56, cy: 56, r: R, fill: 'none', stroke: 'var(--' + tone + ')', strokeWidth: 10, strokeLinecap: 'round',
+          strokeDasharray: (C * pct) + ' ' + C, transform: 'rotate(-90 56 56)', className: 'cr-ring__arc' })),
+      React.createElement('div', { className: 'cr-ring__center' },
+        React.createElement('span', { className: cls('cr-ring__val mono', 'tone-' + tone) }, score == null ? 'N/A' : score.toFixed(1)),
+        React.createElement('span', { className: 'cr-ring__lbl' }, 'score')));
+  }
+
   function CodeReviewPanel() {
     const [crData, setCrData] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
@@ -619,8 +748,9 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         body: JSON.stringify({
           title,
           project: report.project_slug,
+          commit: report.commit_sha || undefined,
           priority: issue.severity === 'critical' ? 'alta' : 'média',
-          context: `Issue [${issue.severity}/${issue.category}] encontrada pelo code review (Minimax M3) no commit ${(report.commit_sha || '').slice(0, 7)}.\n\n${issue.file}${issue.line != null ? ':' + issue.line : ''}\n${issue.message}`,
+          context: `Issue [${issue.severity}/${issue.category}] encontrada pelo Daemon-CodeReview no commit ${(report.commit_sha || '').slice(0, 7)}.\n\n${issue.file}${issue.line != null ? ':' + issue.line : ''}\n${issue.message}`,
           action: issue.suggestion || '(ver sugestão do review)',
           expected: 'Issue corrigida e commitada.',
         }),
@@ -663,43 +793,50 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const trendReports = allReports.filter(r => r.project_slug === latest.project_slug).slice().reverse();
     const trendScores = trendReports.map(r => r.score != null ? Number(r.score) : 0);
 
-    return React.createElement('div', { className: 'panel animate-fade-up' },
-      React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 } },
-        React.createElement('select', {
-          className: 'cb-select', value: projectFilter,
-          onChange: (e) => { setProjectFilter(e.target.value); setSelected(0); },
-          style: { background: 'var(--sidebar)', color: 'var(--foreground)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: '0.85rem' },
-        },
-          React.createElement('option', { value: '' }, 'Todos os projetos'),
-          projectOptions.map(p => React.createElement('option', { key: p, value: p }, p))),
+    const sevSegs = [
+      ['critical', critical.length, 'críticas'],
+      ['warning', warnings.length, 'avisos'],
+      ['info', info.length, 'infos'],
+    ];
+    const sevTotal = issues.length || 1;
+
+    return React.createElement('div', { className: 'panel animate-fade-up stagger' },
+      React.createElement('div', { className: 'cr-toolbar' },
+        React.createElement('div', { className: 'chip-row' },
+          React.createElement('button', { className: cls('fchip', !projectFilter && 'fchip--on'), onClick: () => { setProjectFilter(''); setSelected(0); } }, 'Todos'),
+          projectOptions.map(p => React.createElement('button', {
+            key: p, className: cls('fchip', projectFilter === p && 'fchip--on'),
+            onClick: () => { setProjectFilter(p); setSelected(0); },
+          }, p))),
         React.createElement('button', { className: 'cb-btn', onClick: runNow, disabled: running },
           running ? 'Executando…' : projectFilter ? `Rodar review — ${projectFilter}` : 'Rodar review agora')),
 
-      React.createElement('div', { className: 'dl-stats', style: { marginBottom: 16 } },
-        React.createElement(Card, { className: 'dl-stat' },
-          React.createElement('span', { className: cls('dl-stat__icon', 'tone-' + scoreColor) }, React.createElement(Icon, { name: 'shield', size: 16 })),
-          React.createElement('div', { className: 'dl-stat__meta' },
-            React.createElement('span', { className: 'dl-stat__v mono' }, score == null ? 'N/A' : score.toFixed(1)),
-            React.createElement('span', { className: 'dl-stat__k' }, 'Score'),
-            React.createElement('span', { className: 'dl-stat__sub mono' }, when)),
-          trendScores.length > 1 && React.createElement(Sparkline, { data: trendScores, color: 'var(--' + scoreColor + ')' })),
-        React.createElement(Card, { className: 'dl-stat' },
-          React.createElement('span', { className: 'dl-stat__icon tone-critical' }, React.createElement(Icon, { name: 'alert', size: 16 })),
-          React.createElement('div', { className: 'dl-stat__meta' },
-            React.createElement('span', { className: 'dl-stat__v mono' }, critical.length),
-            React.createElement('span', { className: 'dl-stat__k' }, 'Issues críticas'))),
-        React.createElement(Card, { className: 'dl-stat' },
-          React.createElement('span', { className: 'dl-stat__icon tone-warning' }, React.createElement(Icon, { name: 'alert', size: 16 })),
-          React.createElement('div', { className: 'dl-stat__meta' },
-            React.createElement('span', { className: 'dl-stat__v mono' }, warnings.length + info.length),
-            React.createElement('span', { className: 'dl-stat__k' }, 'Avisos & infos'))),
-        React.createElement(Card, { className: 'dl-stat' },
-          React.createElement('span', { className: 'dl-stat__icon tone-neutral' }, React.createElement(Icon, { name: 'gitBranch', size: 16 })),
-          React.createElement('div', { className: 'dl-stat__meta' },
-            React.createElement('span', { className: 'dl-stat__v mono' }, (latest.commit_sha || '').slice(0, 7) || '—'),
-            React.createElement('span', { className: 'dl-stat__k' }, latest.display_name || latest.project_slug),
-            React.createElement('span', { className: 'dl-stat__sub mono' }, latest.model_used || '')))
-      ),
+      React.createElement('div', { className: 'cr-hero' },
+        React.createElement(Card, { className: 'cr-score' },
+          React.createElement(ScoreRing, { score, tone: scoreColor }),
+          React.createElement('div', { className: 'cr-score__meta' },
+            React.createElement('div', { className: 'cr-score__proj' }, latest.display_name || latest.project_slug),
+            React.createElement('div', { className: 'cr-score__sub mono' },
+              ((latest.commit_sha || '').slice(0, 7) || '—') + ' · ' + (latest.model_used || 'modelo n/d')),
+            React.createElement('div', { className: 'cr-score__sub mono' }, when),
+            trendScores.length > 1 && React.createElement('div', { className: 'cr-score__trend' },
+              React.createElement(Sparkline, { data: trendScores, color: 'var(--' + scoreColor + ')' }),
+              React.createElement('span', { className: 'sub-note mono' }, trendScores.length + ' reviews')))),
+        React.createElement(Card, { className: 'cr-sev' },
+          React.createElement('div', { className: 'cr-sev__head' },
+            React.createElement('span', { className: 'cr-sev__title' }, 'Issues por severidade'),
+            React.createElement('span', { className: 'cr-sev__total mono' }, issues.length)),
+          React.createElement('div', { className: 'cr-sev__bar' },
+            sevSegs.map(([t, n], i) => n > 0 && React.createElement('span', {
+              key: i, className: 'tone-bg-' + (t === 'info' ? 'good' : t), style: { width: (n / sevTotal * 100) + '%', background: t === 'info' ? 'var(--info)' : undefined },
+            }))),
+          React.createElement('div', { className: 'cr-sev__rows' },
+            sevSegs.map(([t, n, lbl], i) => React.createElement('div', { key: i, className: 'cr-sev__row' },
+              React.createElement(StatusBadge, { status: t }, lbl),
+              React.createElement('span', { className: 'mono cr-sev__n' }, n))),
+            refactors.length > 0 && React.createElement('div', { className: 'cr-sev__row' },
+              React.createElement(StatusBadge, { status: 'info' }, 'refactors'),
+              React.createElement('span', { className: 'mono cr-sev__n' }, refactors.length))))),
 
       React.createElement('div', { className: 'grid-side' },
         React.createElement('div', { className: 'col' },
@@ -726,28 +863,31 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
           )
         ),
         React.createElement('div', { className: 'col sticky-col' },
-          React.createElement(Section, { icon: 'alignLeft', title: 'Resumo da revisão' },
+          React.createElement(Section, { icon: 'fileText', title: 'Resumo da revisão' },
             React.createElement('div', { style: { padding: 16, fontSize: '0.85rem', lineHeight: 1.5, color: 'var(--foreground)' } },
               latest.summary || 'Sem resumo disponível.',
               latest.pr_url && React.createElement('div', { style: { marginTop: 10 } },
                 React.createElement('a', { href: latest.pr_url, target: '_blank', rel: 'noreferrer', className: 'mono', style: { color: 'var(--primary)' } }, 'Ver PR no GitHub'))
             )
           ),
-          React.createElement(Section, { icon: 'history', title: 'Histórico', count: reports.length },
-            React.createElement('div', { className: 'alerts' },
-              reports.map((r, i) => React.createElement('div', {
-                key: r.id || i,
-                className: 'alert',
-                onClick: () => setSelected(i),
-                style: { cursor: 'pointer', outline: i === selected ? '1px solid var(--primary)' : 'none', borderRadius: 6 },
-              },
-                React.createElement('span', { className: 'alert__icon tone-neutral' }, React.createElement(Icon, { name: 'fileText', size: 14 })),
-                React.createElement('div', { className: 'alert__body' },
-                  React.createElement('div', { className: 'alert__msg' },
-                    (r.display_name || r.project_slug) + ' — score ' + (r.score != null ? Number(r.score).toFixed(1) : 'N/A')),
-                  React.createElement('div', { className: 'alert__meta mono' },
-                    (r.commit_sha || '').slice(0, 7) + '  ' + (r.created_at ? new Date(r.created_at).toLocaleString('pt-BR') : '')))
-              ))
+          React.createElement(Section, { icon: 'clock', title: 'Histórico', count: reports.length },
+            React.createElement('div', { className: 'cr-hist' },
+              reports.map((r, i) => {
+                const sc = r.score != null ? Number(r.score) : null;
+                const t = sc == null ? 'neutral' : sc < 5 ? 'critical' : sc < 8 ? 'warning' : 'good';
+                return React.createElement('button', {
+                  key: r.id || i,
+                  className: cls('cr-hist__row', i === selected && 'cr-hist__row--on'),
+                  onClick: () => setSelected(i),
+                },
+                  React.createElement('span', { className: cls('cr-hist__score mono', 'tone-' + t) }, sc == null ? '—' : sc.toFixed(1)),
+                  React.createElement('span', { className: 'cr-hist__meta' },
+                    React.createElement('span', { className: 'cr-hist__proj' }, r.display_name || r.project_slug),
+                    React.createElement('span', { className: 'cr-hist__sub mono' },
+                      (r.commit_sha || '').slice(0, 7) + ' · ' + (r.created_at ? ago(r.created_at) + ' atrás' : ''))),
+                  React.createElement('span', { className: 'cr-hist__n mono' },
+                    (Array.isArray(r.issues) ? r.issues.length : 0) + ' issues'));
+              })
             )
           )
         )
@@ -760,7 +900,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       issues.map((it, i) => {
         const key = (report?.id || '0') + ':' + i + ':' + it.file;
         const state = taskState?.[key];
-        return React.createElement('div', { key: i, className: 'alert', style: { alignItems: 'flex-start' } },
+        return React.createElement('div', { key: i, className: cls('alert cr-issue', 'cr-issue--' + tone), style: { alignItems: 'flex-start' } },
           React.createElement('span', { className: 'alert__icon tone-' + tone, style: { marginTop: 2 } }, React.createElement(Icon, { name: tone === 'critical' ? 'xCircle' : 'alert', size: 14 })),
           React.createElement('div', { className: 'alert__body', style: { flex: 1 } },
             React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
@@ -785,7 +925,9 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const [projects, setProjects] = React.useState([]);
     const [loading, setLoading] = React.useState(true);
     const [formOpen, setFormOpen] = React.useState(false);
-    const [formData, setFormData] = React.useState({ slug: '', display_name: '', local_path: '', git_owner: '', git_repo: '', default_branch: 'main', codereview_schedule: '23:45' });
+    const [editingSlug, setEditingSlug] = React.useState(null);
+    const emptyForm = { slug: '', display_name: '', local_path: '', git_owner: '', git_repo: '', default_branch: 'main', codereview_schedule: '02:00', codereview_auto: false };
+    const [formData, setFormData] = React.useState(emptyForm);
 
     const fetchProjects = () => {
       fetch('/ops/api/projects')
@@ -796,14 +938,34 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
 
     React.useEffect(() => { fetchProjects(); }, []);
 
+    const openNew = () => { setEditingSlug(null); setFormData(emptyForm); setFormOpen(true); };
+    const openEdit = (r) => {
+      setEditingSlug(r.slug);
+      setFormData({
+        slug: r.slug,
+        display_name: r.display_name || '',
+        local_path: r.local_path || '',
+        git_owner: r.git_owner || '',
+        git_repo: r.git_repo || '',
+        default_branch: r.default_branch || 'main',
+        codereview_schedule: r.codereview_schedule || '02:00',
+        codereview_auto: !!r.codereview_auto,
+      });
+      setFormOpen(true);
+    };
+
     const saveProject = (e) => {
       e.preventDefault();
-      fetch('/ops/api/projects', {
-        method: 'POST',
+      const isEdit = !!editingSlug;
+      const url = isEdit ? '/ops/api/projects/' + encodeURIComponent(editingSlug) : '/ops/api/projects';
+      const { slug, ...patchBody } = formData;
+      fetch(url, {
+        method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(isEdit ? patchBody : formData)
       }).then(() => {
         setFormOpen(false);
+        setEditingSlug(null);
         fetchProjects();
       }).catch(e => alert(e));
     };
@@ -820,7 +982,11 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       { label: 'Nome', render: (r) => r.display_name },
       { label: 'Repositório', muted: true, render: (r) => React.createElement('span', { className: 'mono' }, (r.git_owner || '?') + '/' + (r.git_repo || '?')) },
       { label: 'Caminho Local', muted: true, render: (r) => React.createElement('span', { className: 'mono' }, r.local_path || '—') },
+      { label: 'Review Diário', align: 'center', render: (r) => r.codereview_auto
+        ? React.createElement(StatusBadge, { status: 'good' }, 'auto ' + (r.codereview_schedule || '02:00'))
+        : React.createElement(StatusBadge, { status: 'neutral' }, 'manual') },
       { label: 'Ações', align: 'right', render: (r) => React.createElement('div', { style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
+        React.createElement(Button, { size: 'sm', variant: 'outline', onClick: (e) => { e.stopPropagation(); openEdit(r); } }, 'Editar'),
         React.createElement(Button, { size: 'sm', variant: 'outline', onClick: (e) => { e.stopPropagation(); deleteProject(r.slug); } }, 'Remover')
       ) },
     ];
@@ -832,18 +998,18 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         icon: 'folder', 
         title: 'Projetos', 
         count: projects.length,
-        actions: React.createElement(Button, { size: 'sm', onClick: () => setFormOpen(true) }, 'Adicionar Projeto') 
+        actions: React.createElement(Button, { size: 'sm', onClick: openNew }, 'Adicionar Projeto')
       },
         loading ? React.createElement('div', { className: 'empty' }, 'Carregando...') :
         React.createElement(DataTable, { cols, rows, empty: 'Nenhum projeto cadastrado.' })
       ),
       formOpen && React.createElement('div', { className: 'drawer-ov open', style: { zIndex: 100 }, onClick: () => setFormOpen(false) }),
       formOpen && React.createElement('div', { className: 'drawer open', style: { zIndex: 101, padding: '24px', width: '100%', maxWidth: '400px' } },
-        React.createElement('h3', { style: { marginTop: 0 } }, 'Novo Projeto'),
+        React.createElement('h3', { style: { marginTop: 0 } }, editingSlug ? 'Editar Projeto — ' + editingSlug : 'Novo Projeto'),
         React.createElement('form', { onSubmit: saveProject, style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
           React.createElement('div', null,
             React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Slug (ID)'),
-            React.createElement('input', { className: 'cb-input', required: true, value: formData.slug, onChange: e => setFormData({...formData, slug: e.target.value}) })
+            React.createElement('input', { className: 'cb-input', required: true, disabled: !!editingSlug, value: formData.slug, onChange: e => setFormData({...formData, slug: e.target.value}) })
           ),
           React.createElement('div', null,
             React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Nome de Exibição'),
@@ -860,6 +1026,14 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
           React.createElement('div', null,
             React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Caminho Local (Docker)'),
             React.createElement('input', { className: 'cb-input', placeholder: '/repo', value: formData.local_path, onChange: e => setFormData({...formData, local_path: e.target.value}) })
+          ),
+          React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            React.createElement('input', { type: 'checkbox', id: 'cr-auto', checked: !!formData.codereview_auto, onChange: e => setFormData({...formData, codereview_auto: e.target.checked}) }),
+            React.createElement('label', { htmlFor: 'cr-auto', style: { fontSize: '13px', cursor: 'pointer' } }, 'Review diário automático')
+          ),
+          formData.codereview_auto && React.createElement('div', null,
+            React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Horário do review (BRT)'),
+            React.createElement('input', { className: 'cb-input', type: 'time', value: formData.codereview_schedule, onChange: e => setFormData({...formData, codereview_schedule: e.target.value}) })
           ),
           React.createElement('div', { style: { display: 'flex', gap: '8px', marginTop: '16px' } },
             React.createElement(Button, { type: 'submit' }, 'Salvar'),

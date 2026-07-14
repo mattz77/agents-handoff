@@ -14,6 +14,7 @@ import {
   getBrainStatus,
   getDataLakeStats,
   getDockerStatus,
+  getRedisHA,
   getGitActivity,
   getSystemInfo,
   getHandoffTimeline,
@@ -226,6 +227,9 @@ export async function handleOpsRequest(
     if (method === "GET" && path === "/ops/api/docker") {
       return json(res, 200, await getDockerStatus()), true;
     }
+    if (method === "GET" && path === "/ops/api/redis-ha") {
+      return json(res, 200, await getRedisHA()), true;
+    }
     if (method === "GET" && path === "/ops/api/git") {
       return json(res, 200, getGitActivity()), true;
     }
@@ -284,24 +288,25 @@ export async function handleOpsRequest(
         gitRepo = urlMatch[2];
       }
       const { rows } = await pg.query(
-        `insert into handoff_projects (slug, display_name, local_path, git_provider, git_owner, git_repo, default_branch, codereview_schedule)
-         values ($1,$2,$3,$4,$5,$6,$7,$8)
+        `insert into handoff_projects (slug, display_name, local_path, git_provider, git_owner, git_repo, default_branch, codereview_schedule, codereview_auto)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          on conflict (slug) do update set
            display_name = excluded.display_name, local_path = excluded.local_path,
            git_provider = excluded.git_provider, git_owner = excluded.git_owner,
            git_repo = excluded.git_repo, default_branch = excluded.default_branch,
-           codereview_schedule = excluded.codereview_schedule, updated_at = now()
+           codereview_schedule = excluded.codereview_schedule,
+           codereview_auto = excluded.codereview_auto, updated_at = now()
          returning *`,
         [b.slug, b.display_name, b.local_path ?? null, b.git_provider ?? "github",
          gitOwner, gitRepo, b.default_branch ?? "main",
-         b.codereview_schedule ?? "23:45"]
+         b.codereview_schedule ?? "02:00", b.codereview_auto ?? false]
       );
       return json(res, 200, rows[0]), true;
     }
     if (method === "PATCH" && path.match(/^\/ops\/api\/projects\/[^/]+$/)) {
       const slug = path.substring("/ops/api/projects/".length);
       const b = await readBody(req);
-      const fields = ["display_name", "local_path", "git_provider", "git_owner", "git_repo", "default_branch", "codereview_schedule", "codereview_enabled"];
+      const fields = ["display_name", "local_path", "git_provider", "git_owner", "git_repo", "default_branch", "codereview_schedule", "codereview_enabled", "codereview_auto"];
       const sets: string[] = [];
       const vals: unknown[] = [];
       for (const f of fields) {
@@ -319,6 +324,23 @@ export async function handleOpsRequest(
       const slug = path.substring("/ops/api/projects/".length);
       const { rowCount } = await pg.query(`update handoff_projects set codereview_enabled = false, updated_at = now() where slug = $1`, [slug]);
       return json(res, rowCount ? 200 : 404, { ok: !!rowCount }), true;
+    }
+
+    if (method === "GET" && path === "/ops/api/settings/github-token") {
+      await pg.query(`create table if not exists handoff_settings (key text primary key, value text, updated_at timestamptz default now())`);
+      const { rows } = await pg.query(`select value from handoff_settings where key = 'github_token'`);
+      const stored = rows[0]?.value || "";
+      return json(res, 200, { configured: !!(stored || process.env.GITHUB_TOKEN), source: stored ? "db" : (process.env.GITHUB_TOKEN ? "env" : "none") }), true;
+    }
+    if (method === "PUT" && path === "/ops/api/settings/github-token") {
+      const b = await readBody(req);
+      await pg.query(`create table if not exists handoff_settings (key text primary key, value text, updated_at timestamptz default now())`);
+      await pg.query(
+        `insert into handoff_settings (key, value, updated_at) values ('github_token', $1, now())
+         on conflict (key) do update set value = excluded.value, updated_at = now()`,
+        [String(b.token || "")]
+      );
+      return json(res, 200, { ok: true }), true;
     }
 
     json(res, 404, { error: "Rota não encontrada" });

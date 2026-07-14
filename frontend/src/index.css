@@ -439,6 +439,82 @@ body { margin: 0; background: var(--background); color: var(--foreground); }
 .roadmap__foot{padding-top:4px}
 
 /* ============================================================
+   REDESIGN v2 — Brain / DataLake / Code Review
+   ============================================================ */
+/* Reveal escalonado dos blocos de primeiro nível do painel */
+@media (prefers-reduced-motion: no-preference){
+  .panel.stagger>*{opacity:0;animation:panel-in .5s var(--ease-out) forwards}
+  .panel.stagger>*:nth-child(1){animation-delay:.02s}
+  .panel.stagger>*:nth-child(2){animation-delay:.08s}
+  .panel.stagger>*:nth-child(3){animation-delay:.14s}
+  .panel.stagger>*:nth-child(4){animation-delay:.2s}
+  @keyframes panel-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+}
+
+/* Brain v2 */
+.brain-active--v2{background:linear-gradient(135deg,color-mix(in srgb,var(--brand-accent) 7%,var(--card)),var(--card) 55%)}
+.brain-active__r{min-width:190px}
+.brain-progress{width:100%;margin-top:6px}
+.brain-progress__bar{display:flex;height:7px;border-radius:var(--radius-full);overflow:hidden;background:var(--muted);gap:2px}
+.brain-progress__bar span{display:block;height:100%;min-width:3px;transition:width .6s var(--ease-out)}
+.brain-progress__legend{display:flex;justify-content:flex-end;gap:10px;font-size:9px;margin-top:5px;white-space:nowrap}
+.brain-stat--v2{gap:10px}
+.brain-stat__icon{width:28px;height:28px;border-radius:var(--radius-lg);display:grid;place-items:center;background:var(--muted);flex-shrink:0}
+.brain-stat--v2 .brain-stat__k{flex:1}
+.brain-task{display:inline-flex;align-items:center;gap:9px}
+.brain-task__rail{width:3px;height:16px;border-radius:2px;flex-shrink:0}
+
+/* DataLake v2 */
+.dl-stat{transition:transform .18s var(--ease-out),box-shadow .18s}
+.dl-stat:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.dl-gauge__arc{transition:stroke-dasharray .8s var(--ease-out)}
+.dl-cats{width:100%;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent)}
+.dl-cats__bar{display:flex;height:7px;border-radius:var(--radius-full);overflow:hidden;background:var(--muted);gap:2px}
+.dl-cats__bar span{display:block;height:100%;min-width:3px}
+.dl-cats__legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+.dl-cats__item{display:inline-flex;align-items:center;gap:5px;font-size:9px;color:var(--muted-foreground)}
+.dl-cats__item i{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.dl-cats__item b{color:var(--foreground)}
+
+/* Code Review v2 */
+.cr-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.cr-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--panel-gap);align-items:stretch}
+@media (max-width:880px){.cr-hero{grid-template-columns:1fr}}
+.cr-score{padding:var(--card-pad);display:flex;align-items:center;gap:18px}
+.cr-ring{position:relative;width:112px;height:112px;flex-shrink:0}
+.cr-ring__arc{transition:stroke-dasharray .8s var(--ease-out)}
+.cr-ring__center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.cr-ring__val{font-size:var(--text-2xl);font-weight:700}
+.cr-ring__lbl{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground)}
+.cr-score__meta{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cr-score__proj{font-size:var(--text-lg);font-weight:600;letter-spacing:-.02em;color:var(--foreground)}
+.cr-score__sub{font-size:var(--text-2xs);color:var(--muted-foreground)}
+.cr-score__trend{display:flex;align-items:flex-end;gap:8px;margin-top:4px}
+.cr-sev{padding:var(--card-pad);display:flex;flex-direction:column;gap:10px}
+.cr-sev__head{display:flex;justify-content:space-between;align-items:baseline}
+.cr-sev__title{font:var(--type-section-title);color:var(--foreground)}
+.cr-sev__total{font-size:var(--text-xl);font-weight:700;color:var(--foreground)}
+.cr-sev__bar{display:flex;height:8px;border-radius:var(--radius-full);overflow:hidden;background:var(--muted);gap:2px}
+.cr-sev__bar span{display:block;height:100%;min-width:3px}
+.cr-sev__rows{display:flex;flex-direction:column}
+.cr-sev__row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--border) 40%,transparent)}
+.cr-sev__row:last-child{border-bottom:none}
+.cr-sev__n{font-size:var(--text-xs);font-weight:700;color:var(--foreground)}
+.cr-issue{border-left:2px solid transparent;padding-left:10px;border-radius:2px}
+.cr-issue--critical{border-left-color:var(--critical)}
+.cr-issue--warning{border-left-color:var(--warning)}
+.cr-hist{display:flex;flex-direction:column;gap:6px}
+.cr-hist__row{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:var(--radius-lg);
+  border:1px solid transparent;background:transparent;cursor:pointer;font-family:var(--font-sans);transition:background .15s,border-color .15s}
+.cr-hist__row:hover{background:var(--muted)}
+.cr-hist__row--on{background:color-mix(in srgb,var(--brand-accent) 8%,var(--card));border-color:color-mix(in srgb,var(--brand-accent) 35%,transparent)}
+.cr-hist__score{width:34px;font-size:var(--text-base);font-weight:700;flex-shrink:0;text-align:center}
+.cr-hist__meta{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.cr-hist__proj{font-size:var(--text-xs);font-weight:600;color:var(--foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cr-hist__sub{font-size:9px;color:var(--muted-foreground)}
+.cr-hist__n{font-size:9px;color:var(--muted-foreground);flex-shrink:0}
+
+/* ============================================================
    MOBILE / RESPONSIVE (≤ 768px & Bottom Tab Bar)
    ============================================================ */
 /* Hide desktop sidebar on mobile */

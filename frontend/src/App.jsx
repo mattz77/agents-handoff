@@ -168,7 +168,11 @@ function App() {
   };
   const showToast = (msg, kind) => { setToast({ msg, kind }); clearTimeout(showToast._t); showToast._t = setTimeout(() => setToast(null), 3200); };
 
-  const refresh = () => { setUpdated(new Date().toLocaleTimeString('pt-BR')); showToast('Métricas atualizadas', 'ok'); };
+  const refresh = () => {
+    setUpdated(new Date().toLocaleTimeString('pt-BR'));
+    setDlq(window.HD?.dlq?.slice() || []);
+    showToast('Métricas atualizadas', 'ok');
+  };
 
   React.useEffect(() => {
     // Setup global reload function for data-real.js to call
@@ -177,8 +181,22 @@ function App() {
   }, []);
 
   const onReplay = (item) => {
-    setDlq((cur) => cur.filter((d) => d.id !== item.id));
-    showToast('Replay OK · reinjetado no stream ' + (item.id.split('-')[0]), 'ok');
+    fetch('/ops/api/dlq/replay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: item.id }),
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok && d.ok !== false, d })))
+      .then(({ ok, d }) => {
+        if (ok) {
+          setDlq((cur) => cur.filter((x) => x.id !== item.id));
+          if (window.HD) window.HD.dlq = (window.HD.dlq || []).filter((x) => x.id !== item.id);
+          showToast('Replay OK · reinjetado no stream' + (d.newStreamId ? ' (' + d.newStreamId + ')' : ''), 'ok');
+        } else {
+          showToast('Replay falhou: ' + (d.error || 'erro desconhecido'), 'bad');
+        }
+      })
+      .catch((e) => showToast('Replay falhou: ' + e.message, 'bad'));
   };
 
   const pickStatus = (status, goTab) => { setFilter(status); if (goTab) setTab(goTab); };

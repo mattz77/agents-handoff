@@ -162,7 +162,7 @@
 
     // Wave 2 — slow intel (docker socket, git, fs, timeline Postgres)
     try {
-      const [brain, docker, system, git, datalake, timeline, outboxStats, codereview] = await Promise.all([
+      const [brain, docker, system, git, datalake, timeline, outboxStats, codereview, redisHA] = await Promise.all([
         fetch('/ops/api/brain').then(r=>r.ok?r.json():Promise.reject(r)).catch(()=>window.HD.brain || {}),
         fetch('/ops/api/docker').then(r=>r.ok?r.json():Promise.reject(r)).catch(()=>window.HD.docker || {}),
         fetch('/ops/api/system').then(r=>r.ok?r.json():Promise.reject(r)).catch(()=>window.HD.system || {}),
@@ -171,6 +171,7 @@
         fetch('/ops/api/timeline').then(r=>r.ok?r.json():Promise.reject(r)).catch(()=>window.HD.timeline || []),
         fetch('/ops/api/outbox-stats').then(r=>r.ok?r.json():Promise.reject(r)).catch(()=>window.HD.outboxStats || {}),
         fetch('/ops/api/codereview').then(r=>r.ok?r.json():Promise.reject(r)).catch(()=>window.HD.codereview || { reports: [] }),
+        fetch('/ops/api/redis-ha').then(r=>r.ok?r.json():Promise.reject(r)).catch(()=>REDIS_HA_EMPTY),
       ]);
 
       const _timeline = Array.isArray(timeline) ? timeline : [];
@@ -179,7 +180,7 @@
       window.HD = Object.assign({}, window.HD, {
         brain: _brain,
         docker: docker && docker.containers && !docker.error ? docker : { totalRunning: 0, totalStopped: 0, containers: [] },
-        redisHA: REDIS_HA_EMPTY,
+        redisHA: redisHA && redisHA.status && redisHA.status !== 'unknown' ? redisHA : REDIS_HA_EMPTY,
         system: system && system.cpuUsage !== undefined && !system.error ? system : { memoryUsedMB: 0, memoryTotalMB: 1, uptimeHours: 0, cpuUsage: 0, nodeVersion: '?', platform: '?' },
         datalake: buildDatalake(datalake),
         brainFiles: buildBrainFiles(_brain),
