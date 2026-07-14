@@ -16,7 +16,7 @@ function setAgentToken(token: string) {
   const next = token || "";
   if (next === AGENT_TOKEN) return;
   AGENT_TOKEN = next;
-  AGENT_TOKEN_HASH = AGENT_TOKEN ? createHash("sha256").update(AGENT_TOKEN).digest() : null;
+  AGENT_TOKEN_HASH = next ? createHash("sha256").update(next).digest() : null;
 }
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
