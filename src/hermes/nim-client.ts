@@ -54,7 +54,9 @@ async function chatOnce(messages: NimChatMessage[], opts: NimChatOptions): Promi
   }
 }
 
-/** Cliente OpenAI-compatible para o endpoint do Minimax M3 (NVIDIA NIM). Retry em 429/5xx. */
+/** Cliente OpenAI-compatible para o endpoint do Minimax M3 (NVIDIA NIM). Retry em 429/5xx
+ *  e em falhas de rede/abort transientes (ex.: blip de conectividade Docker/WSL2) — sem isso
+ *  um único "This operation was aborted" isolado matava a correção da issue pra sempre. */
 export async function nimChat(messages: NimChatMessage[], opts: NimChatOptions = {}): Promise<string> {
   if (!API_KEY) throw new Error("LINTER_API_KEY não configurado no .env");
 
@@ -65,7 +67,8 @@ export async function nimChat(messages: NimChatMessage[], opts: NimChatOptions =
     } catch (e) {
       lastErr = e as Error;
       const status = (e as Error & { status?: number }).status;
-      const retryable = status === 429 || (status !== undefined && status >= 500);
+      const isNetworkGlitch = e instanceof Error && (e.name === "AbortError" || /aborted|fetch failed|ECONNRESET|ETIMEDOUT/i.test(e.message));
+      const retryable = status === 429 || (status !== undefined && status >= 500) || isNetworkGlitch;
       if (!retryable || attempt === MAX_RETRIES) throw lastErr;
       await sleep(1000 * 2 ** attempt);
     }
