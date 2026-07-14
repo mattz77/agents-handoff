@@ -8,8 +8,14 @@ import { runCodeReviewForSlug } from "./codereview-cron";
 // API de agente — consumida por bots externos (Telegram via n8n, AnythingLLM agent skill).
 // Fica fora de /ops/api/* de propósito: aquele prefixo é gated pelo Cloudflare Access (JWT de
 // browser), que bots não têm. Aqui a auth é Bearer token fixo (AGENT_API_TOKEN no .env).
-const AGENT_TOKEN = process.env.AGENT_API_TOKEN || "";
-const AGENT_TOKEN_HASH = AGENT_TOKEN ? createHash("sha256").update(AGENT_TOKEN).digest() : null;
+let AGENT_TOKEN = process.env.AGENT_API_TOKEN || "";
+let AGENT_TOKEN_HASH = AGENT_TOKEN ? createHash("sha256").update(AGENT_TOKEN).digest() : null;
+
+/** Reatribui o token em runtime (ex.: reload de config) e recomputa o hash. */
+export function setAgentToken(token: string) {
+  AGENT_TOKEN = token || "";
+  AGENT_TOKEN_HASH = AGENT_TOKEN ? createHash("sha256").update(AGENT_TOKEN).digest() : null;
+}
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
