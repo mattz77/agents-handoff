@@ -17,14 +17,14 @@ function json(res: http.ServerResponse, code: number, body: unknown) {
 }
 
 function authorized(req: http.IncomingMessage): boolean {
-  if (!AGENT_TOKEN) return false; // sem token configurado, API desligada (fail-closed)
+  if (!AGENT_TOKEN || !AGENT_TOKEN_HASH) return false; // sem token configurado, API desligada (fail-closed)
   const PREFIX = "Bearer ";
   const header = req.headers.authorization || "";
   if (!header.startsWith(PREFIX)) return false;
   const provided = header.slice(PREFIX.length);
   if (!provided) return false;
   const a = createHash("sha256").update(provided).digest();
-  return timingSafeEqual(a, AGENT_TOKEN_HASH!);
+  return timingSafeEqual(a, AGENT_TOKEN_HASH);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
