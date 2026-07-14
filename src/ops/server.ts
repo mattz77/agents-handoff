@@ -2,7 +2,7 @@ import http from "node:http";
 import { redis } from "../infra/redis";
 import fs from "node:fs";
 import { join, extname } from "node:path";
-import { pg } from "../infra/postgres";
+import { pg, getGithubToken } from "../infra/postgres";
 import {
   getOverview,
   getRecentHandoffs,
@@ -23,7 +23,9 @@ import {
   appendBrainTask,
 } from "./metrics";
 import { getCodeReviewData, getCodeReviewReport } from "./codereview-data";
-import { runCodeReviewForSlug } from "./codereview-cron";
+import { runCodeReviewForSlug, runAttackForSlug, isAttacking } from "./codereview-cron";
+import { listNimModels } from "../hermes/nim-client";
+import { RECOMMENDED_MODELS } from "../hermes/skills";
 import { replayFromDlq } from "./replay";
 import { transitionStatus } from "../outbox";
 import { verifyAccess, accessConfigured } from "./cf-access";
@@ -254,6 +256,81 @@ export async function handleOpsRequest(
       const report = await getCodeReviewReport(id);
       return json(res, report ? 200 : 404, report || { error: "Not found" }), true;
     }
+    if (method === "GET" && path === "/ops/api/codereview/models") {
+      try {
+        const ids = await listNimModels();
+        return json(res, 200, { models: ids, recommended: RECOMMENDED_MODELS }), true;
+      } catch (e) {
+        return json(res, 502, { error: (e as Error).message }), true;
+      }
+    }
+    if (method === "GET" && path === "/ops/api/codereview/attacks") {
+      const slug = url.searchParams.get("slug");
+      const { rows } = await pg.query(
+        `select id, project_slug, report_id, model_used, status, branch, pr_url, pr_number,
+                issues_total, issues_fixed, log, current_step, round, cycle_id,
+                verify_status, verify_model, verify_notes, error, created_at, finished_at
+         from codereview_attacks ${slug ? "where project_slug = $1" : ""} order by created_at desc limit 30`,
+        slug ? [slug] : []
+      );
+      return json(res, 200, { attacks: rows }), true;
+    }
+    if (method === "GET" && path.match(/^\/ops\/api\/codereview\/cycle\/\d+$/)) {
+      const cycleId = Number(path.split("/").pop());
+      const { rows } = await pg.query(
+        `select id, round, status, model_used, verify_status, verify_model, verify_notes, current_step,
+                issues_total, issues_fixed, pr_url, pr_number, created_at, finished_at
+         from codereview_attacks where cycle_id = $1 order by round asc`,
+        [cycleId]
+      );
+      return json(res, 200, { rounds: rows }), true;
+    }
+    if (method === "POST" && path === "/ops/api/codereview/attack") {
+      const body = await readBody(req);
+      if (!body.slug) return json(res, 400, { error: "Campo 'slug' é obrigatório" }), true;
+      if (isAttacking(String(body.slug))) {
+        return json(res, 409, { error: `Já existe um ataque em curso para "${body.slug}" — aguarde terminar.` }), true;
+      }
+      const { rows: alreadyRunning } = await pg.query(
+        `select id from codereview_attacks where project_slug = $1 and status = 'running' limit 1`,
+        [body.slug]
+      );
+      if (alreadyRunning.length) {
+        return json(res, 409, { error: `Ataque #${alreadyRunning[0].id} já em curso para "${body.slug}" (outra réplica/restart) — aguarde terminar.` }), true;
+      }
+      // Ciclo completo (ataque + verificação + possíveis rodadas seguintes) é longo — roda em
+      // background, frontend acompanha via GET /ops/api/codereview/attacks?slug=.
+      runAttackForSlug(String(body.slug), {
+        reportId: body.reportId ? Number(body.reportId) : undefined,
+        model: body.model ? String(body.model) : undefined,
+        verifyModel: body.verifyModel ? String(body.verifyModel) : undefined,
+      }).then((r) => console.log(`[FixAgent] ciclo ${body.slug}:`, JSON.stringify(r).slice(0, 200)))
+        .catch((e) => console.error(`[FixAgent] ciclo ${body.slug} rejeitado:`, e.message));
+      return json(res, 202, { started: true, slug: body.slug }), true;
+    }
+    if (method === "POST" && path === "/ops/api/codereview/merge") {
+      const body = await readBody(req);
+      if (!body.slug || !body.prNumber) return json(res, 400, { error: "Campos 'slug' e 'prNumber' são obrigatórios" }), true;
+      const { rows: projRows } = await pg.query(`select git_owner, git_repo from handoff_projects where slug = $1`, [body.slug]);
+      if (!projRows.length || !projRows[0].git_owner || !projRows[0].git_repo) {
+        return json(res, 404, { error: `Projeto "${body.slug}" não encontrado ou sem git_owner/git_repo` }), true;
+      }
+      const { git_owner: owner, git_repo: repo } = projRows[0];
+      const token = await getGithubToken();
+      if (!token) return json(res, 500, { error: "GITHUB_TOKEN não configurado" }), true;
+      const mergeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${body.prNumber}/merge`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+        body: JSON.stringify({ merge_method: body.mergeMethod || "squash" }),
+      });
+      const mergeData = await mergeRes.json().catch(() => ({}));
+      if (!mergeRes.ok) return json(res, 422, { error: mergeData.message || `GitHub HTTP ${mergeRes.status}` }), true;
+      await pg.query(
+        `update codereview_attacks set current_step = 'PR mergeado manualmente' where pr_number = $2 and project_slug = $1`,
+        [body.slug, body.prNumber]
+      ).catch(() => {});
+      return json(res, 200, { merged: true, sha: mergeData.sha }), true;
+    }
     if (method === "GET" && path.match(/^\/ops\/api\/codereview\/[^/]+$/)) {
       const slug = path.substring("/ops/api/codereview/".length);
       return json(res, 200, await getCodeReviewData(slug)), true;
@@ -261,12 +338,22 @@ export async function handleOpsRequest(
     if (method === "POST" && path === "/ops/api/codereview/run") {
       const body = await readBody(req);
       if (body.slug) {
-        const result = await runCodeReviewForSlug(String(body.slug));
+        const result = await runCodeReviewForSlug(String(body.slug), body.model ? String(body.model) : undefined);
         return json(res, result.ok ? 200 : 422, result), true;
       }
       const { rows } = await pg.query(`select slug from handoff_projects where codereview_enabled = true`);
       const results = await Promise.allSettled(rows.map((r: any) => runCodeReviewForSlug(r.slug)));
       return json(res, 200, { triggered: rows.map((r: any) => r.slug), results }), true;
+    }
+    if (method === "POST" && path.match(/^\/ops\/api\/projects\/[^/]+\/model$/)) {
+      const slug = path.split("/")[4];
+      const body = await readBody(req);
+      const { rows } = await pg.query(
+        `update handoff_projects set codereview_model = $2, updated_at = now() where slug = $1 returning slug, codereview_model`,
+        [slug, body.model || null]
+      );
+      if (!rows.length) return json(res, 404, { error: `Projeto "${slug}" não encontrado` }), true;
+      return json(res, 200, rows[0]), true;
     }
 
     if (method === "GET" && path === "/ops/api/projects") {

@@ -4,6 +4,7 @@ import { pg } from "../infra/postgres";
 import { nimChat, extractJson } from "./nim-client";
 import { collectGitContext, ProjectRow } from "./git-collector";
 import { postReviewComments, CodeReviewIssue } from "./git-commenter";
+import { reviewSkill } from "./skills";
 
 const BRAIN_PATH = "G:\\Meu Drive\\LLM-Brain\\active-context.md";
 const MODEL = process.env.LINTER_MODEL || "minimax-m3";
@@ -15,28 +16,7 @@ interface CodeReviewResult {
   refactors: Array<{ file: string; description: string; code_before: string; code_after: string }>;
 }
 
-function systemPrompt(displayName: string): string {
-  return `Você é o Daemon-CodeReview, engenheiro sênior revisando código do projeto ${displayName}.
-Responda APENAS com JSON válido no schema:
-{
-  "score": <0-10>,
-  "summary": "<resumo técnico 2-3 frases>",
-  "issues": [{
-    "file": "<path>",
-    "line": <int ou null>,
-    "severity": "critical|warning|info",
-    "category": "bug|security|performance|style|debt",
-    "message": "<descrição>",
-    "suggestion": "<código ou ação corretiva>"
-  }],
-  "refactors": [{
-    "file": "<path>",
-    "description": "<o que refatorar e por quê>",
-    "code_before": "<trecho atual>",
-    "code_after": "<trecho sugerido>"
-  }]
-}`;
-}
+const systemPrompt = reviewSkill;
 
 function coerceResult(raw: string): CodeReviewResult {
   const o = JSON.parse(extractJson(raw));
@@ -98,12 +78,13 @@ export async function runCodeReviewForProject(project: ProjectRow): Promise<{ ok
       `DIFF:\n${git.diff}`,
     ].filter(Boolean).join("\n\n---\n\n");
 
+    const modelUsed = project.codereview_model || MODEL;
     const raw = await nimChat(
       [
         { role: "system", content: systemPrompt(project.display_name) },
         { role: "user", content: userPayload },
       ],
-      { jsonMode: true }
+      { jsonMode: true, model: modelUsed }
     );
 
     const result = coerceResult(raw);
@@ -116,7 +97,7 @@ export async function runCodeReviewForProject(project: ProjectRow): Promise<{ ok
       [
         project.slug, git.commitSha, git.openPrNumber ?? null, git.openPrUrl ?? null,
         result.score, JSON.stringify(result.issues), result.summary, JSON.stringify(result.refactors),
-        git.diff.split("\n").length, MODEL,
+        git.diff.split("\n").length, modelUsed,
       ]
     );
     const reportId = rows[0].id;

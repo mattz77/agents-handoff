@@ -12,6 +12,7 @@ export interface ProjectRow {
   git_owner: string | null;
   git_repo: string | null;
   default_branch: string;
+  codereview_model?: string | null;
 }
 
 export interface GitCollectResult {
