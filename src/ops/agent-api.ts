@@ -1,4 +1,5 @@
 import http from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { pg } from "../infra/postgres";
 import { getBrainStatus } from "./metrics";
 import { getCodeReviewData } from "./codereview-data";
@@ -17,7 +18,9 @@ function json(res: http.ServerResponse, code: number, body: unknown) {
 function authorized(req: http.IncomingMessage): boolean {
   if (!AGENT_TOKEN) return false; // sem token configurado, API desligada (fail-closed)
   const header = req.headers.authorization || "";
-  return header === `Bearer ${AGENT_TOKEN}`;
+  const bufHeader = Buffer.from(header);
+  const bufToken = Buffer.from(`Bearer ${AGENT_TOKEN}`);
+  return bufHeader.length === bufToken.length && timingSafeEqual(bufHeader, bufToken);
 }
 
 async function readBody(req: http.IncomingMessage): Promise<any> {
