@@ -4,7 +4,7 @@ import { pg } from "../infra/postgres";
 import { nimChat, extractJson } from "./nim-client";
 import { collectGitContext, ProjectRow } from "./git-collector";
 import { postReviewComments, CodeReviewIssue } from "./git-commenter";
-import { reviewSkill } from "./skills";
+import { reviewSkill, reviewAuditSkill, RECOMMENDED_MODELS } from "./skills";
 import { setReviewStep } from "./review-progress";
 
 const BRAIN_PATH = "G:\\Meu Drive\\LLM-Brain\\active-context.md";
@@ -32,6 +32,53 @@ function coerceResult(raw: string): CodeReviewResult {
     issues,
     refactors: Array.isArray(o.refactors) ? o.refactors : [],
   };
+}
+
+/** 2º passe cético: auditor adversarial tenta derrubar cada finding antes de virar comentário.
+ *  Falha do auditor não bloqueia o review — mantém as issues originais (fail-open). */
+async function auditIssues(
+  displayName: string,
+  issues: CodeReviewIssue[],
+  diff: string,
+  fileTree: string[],
+  reviewModel: string,
+  verifyModel?: string | null
+): Promise<CodeReviewIssue[]> {
+  if (!issues.length) return issues;
+  // Auditor não pode ser o mesmo modelo que gerou os findings — herda o viés.
+  const auditModel = verifyModel
+    || process.env.CODEREVIEW_AUDIT_MODEL
+    || RECOMMENDED_MODELS.verify.find((m) => m !== reviewModel)
+    || RECOMMENDED_MODELS.verify[0];
+  try {
+    const raw = await nimChat(
+      [
+        { role: "system", content: reviewAuditSkill(displayName) },
+        {
+          role: "user",
+          content: [
+            `ISSUES A AUDITAR (índices 0-based):\n${JSON.stringify(issues, null, 2)}`,
+            fileTree.length ? `ÁRVORE DO REPO (paths existentes):\n${fileTree.join("\n")}` : "",
+            `DIFF:\n${diff}`,
+          ].filter(Boolean).join("\n\n---\n\n"),
+        },
+      ],
+      { jsonMode: true, model: auditModel }
+    );
+    const o = JSON.parse(extractJson(raw));
+    const kept: number[] = Array.isArray(o.kept) ? o.kept.filter((i: unknown) => Number.isInteger(i)) : [];
+    const rejected: Array<{ index: number; reason: string }> = Array.isArray(o.rejected) ? o.rejected : [];
+    for (const r of rejected) {
+      console.warn(`[ReviewAuditor] issue #${r.index} derrubada (${auditModel}): ${r.reason}`);
+    }
+    // Sanidade: se o auditor devolveu índices inválidos ou derrubou tudo sem justificar, fail-open.
+    const survivors = kept.filter((i) => i >= 0 && i < issues.length).map((i) => issues[i]);
+    if (!survivors.length && !rejected.length) return issues;
+    return survivors;
+  } catch (e) {
+    console.warn(`[ReviewAuditor] falha no passe de auditoria (${auditModel}), mantendo issues originais:`, (e as Error).message);
+    return issues;
+  }
 }
 
 async function getRecentHandoffs(slug: string): Promise<string> {
@@ -103,6 +150,18 @@ export async function runCodeReviewForProject(project: ProjectRow, force = false
     );
 
     const result = coerceResult(raw);
+
+    if (result.issues.length) {
+      setReviewStep(project.slug, `auditoria cética dos ${result.issues.length} finding(s)…`);
+      const before = result.issues.length;
+      result.issues = await auditIssues(
+        project.display_name, result.issues, git.diff, git.fileTree,
+        modelUsed, (project as { verify_model?: string | null }).verify_model
+      );
+      if (result.issues.length < before) {
+        console.log(`[CodeReview] auditoria: ${before - result.issues.length}/${before} issue(s) derrubada(s) antes de postar`);
+      }
+    }
 
     setReviewStep(project.slug, "salvando relatório…");
     const { rows } = await pg.query(
