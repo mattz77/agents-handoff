@@ -23,7 +23,8 @@ import {
   appendBrainTask,
 } from "./metrics";
 import { getCodeReviewData, getCodeReviewReport } from "./codereview-data";
-import { runCodeReviewForSlug, runAttackForSlug, isAttacking } from "./codereview-cron";
+import { runCodeReviewForSlug, runAttackForSlug, runCiFixForSlug, isAttacking } from "./codereview-cron";
+import { getReviewProgress, getAllReviewProgress } from "../hermes/review-progress";
 import { listNimModels } from "../hermes/nim-client";
 import { RECOMMENDED_MODELS } from "../hermes/skills";
 import { replayFromDlq } from "./replay";
@@ -264,6 +265,11 @@ export async function handleOpsRequest(
         return json(res, 502, { error: (e as Error).message }), true;
       }
     }
+    if (method === "GET" && path === "/ops/api/codereview/run-status") {
+      const slug = url.searchParams.get("slug");
+      if (slug) return json(res, 200, getReviewProgress(slug) || { status: null }), true;
+      return json(res, 200, getAllReviewProgress()), true;
+    }
     if (method === "GET" && path === "/ops/api/codereview/attacks") {
       const slug = url.searchParams.get("slug");
       const { rows } = await pg.query(
@@ -338,12 +344,30 @@ export async function handleOpsRequest(
     if (method === "POST" && path === "/ops/api/codereview/run") {
       const body = await readBody(req);
       if (body.slug) {
-        const result = await runCodeReviewForSlug(String(body.slug), body.model ? String(body.model) : undefined);
+        const result = await runCodeReviewForSlug(String(body.slug), body.model ? String(body.model) : undefined, !!body.force);
         return json(res, result.ok ? 200 : 422, result), true;
       }
       const { rows } = await pg.query(`select slug from handoff_projects where codereview_enabled = true`);
       const results = await Promise.allSettled(rows.map((r: any) => runCodeReviewForSlug(r.slug)));
       return json(res, 200, { triggered: rows.map((r: any) => r.slug), results }), true;
+    }
+    if (method === "POST" && path === "/ops/api/cifix/run") {
+      const body = await readBody(req);
+      if (!body.slug) return json(res, 400, { error: "slug obrigatório" }), true;
+      const result = await runCiFixForSlug(String(body.slug), {
+        prNumber: body.prNumber ? Number(body.prNumber) : undefined,
+        model: body.model ? String(body.model) : undefined,
+      });
+      return json(res, result.ok ? 200 : 422, result), true;
+    }
+    if (method === "GET" && path === "/ops/api/cifix/attempts") {
+      const url = new URL(req.url || "", "http://x");
+      const slug = url.searchParams.get("slug");
+      const { rows } = await pg.query(
+        `select * from ci_fix_attempts ${slug ? "where project_slug = $1" : ""} order by created_at desc limit 20`,
+        slug ? [slug] : []
+      ).catch(() => ({ rows: [] as any[] }));
+      return json(res, 200, rows), true;
     }
     if (method === "POST" && path.match(/^\/ops\/api\/projects\/[^/]+\/model$/)) {
       const slug = path.split("/")[4];
