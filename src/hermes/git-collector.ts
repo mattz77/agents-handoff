@@ -23,6 +23,15 @@ export interface GitCollectResult {
   openPrNumber?: number;
   openPrUrl?: string;
   changedFiles: string[];
+  /** Paths de todos os arquivos do repo (sem conteúdo) — contexto barato pra checagens de existência. */
+  fileTree: string[];
+}
+
+const MAX_TREE_ENTRIES = Number(process.env.CODEREVIEW_MAX_TREE_ENTRIES || 4_000);
+
+function capTree(paths: string[]): string[] {
+  const safe = paths.filter(Boolean).filter((f) => !isSensitivePath(f));
+  return safe.length > MAX_TREE_ENTRIES ? safe.slice(0, MAX_TREE_ENTRIES) : safe;
 }
 
 function truncateDiff(diff: string): string {
@@ -51,31 +60,62 @@ function collectLocal(project: ProjectRow): GitCollectResult {
   const changedFiles = changedFilesRaw
     ? changedFilesRaw.split("\n").filter(Boolean).filter((f) => !isSensitivePath(f))
     : [];
+  const treeRaw = run("git ls-files");
+  const fileTree = capTree(treeRaw ? treeRaw.split("\n") : []);
 
-  return { commitSha, branch, diff: truncateDiff(diff), commits, changedFiles };
+  return { commitSha, branch, diff: truncateDiff(diff), commits, changedFiles, fileTree };
+}
+
+const GITHUB_TIMEOUT_MS = 30_000;
+const GITHUB_MAX_RETRIES = 3;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function githubFetch(url: string, accept: string): Promise<Response> {
+  const token = await getGithubToken();
+  let lastErr: Error | undefined;
+  for (let attempt = 0; attempt <= GITHUB_MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: accept,
+        },
+        signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
+      });
+      return res;
+    } catch (e) {
+      lastErr = e as Error;
+      const isTransient = lastErr.name === "TimeoutError" || lastErr.name === "AbortError"
+        || /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(lastErr.message);
+      if (!isTransient || attempt === GITHUB_MAX_RETRIES) throw lastErr;
+      console.warn(`[GitCollector] GitHub fetch attempt ${attempt + 1} failed (${lastErr.message}), retrying in ${2 ** attempt}s…`);
+      await sleep(1000 * 2 ** attempt);
+    }
+  }
+  throw lastErr;
 }
 
 async function githubApi(path: string): Promise<any> {
-  const token = await getGithubToken();
-  const res = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-    },
-  });
+  const res = await githubFetch(`https://api.github.com${path}`, "application/vnd.github+json");
   if (!res.ok) throw new Error(`GitHub API HTTP ${res.status} em ${path}`);
   return res.json();
 }
 
 async function githubDiff(path: string): Promise<string> {
-  const token = await getGithubToken();
-  const res = await fetch(`https://api.github.com${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github.v3.diff",
-    },
-  });
+  const res = await githubFetch(`https://api.github.com${path}`, "application/vnd.github.v3.diff");
   return res.ok ? await res.text() : "";
+}
+
+/** Árvore de paths do repo no commit dado (Trees API recursiva). Falha vira [] — tree é contexto opcional. */
+async function githubFileTree(owner: string, repo: string, sha: string): Promise<string[]> {
+  try {
+    const tree = await githubApi(`/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`);
+    const entries = Array.isArray(tree?.tree) ? tree.tree : [];
+    return capTree(entries.filter((e: any) => e.type === "blob").map((e: any) => e.path));
+  } catch (e) {
+    console.warn(`[GitCollector] falha ao coletar file tree de ${owner}/${repo}@${sha.slice(0, 7)}: ${(e as Error).message}`);
+    return [];
+  }
 }
 
 async function collectGithub(project: ProjectRow): Promise<GitCollectResult> {
@@ -92,14 +132,16 @@ async function collectGithub(project: ProjectRow): Promise<GitCollectResult> {
     const prBase = pr.base?.ref || base;
     const compare = await githubApi(`/repos/${owner}/${repo}/compare/${prBase}...${head}`);
     const diff = await githubDiff(`/repos/${owner}/${repo}/compare/${prBase}...${head}`);
+    const headSha = compare?.commits?.slice(-1)?.[0]?.sha || pr.head?.sha || head;
     return {
-      commitSha: compare?.commits?.slice(-1)?.[0]?.sha || head,
+      commitSha: headSha,
       branch: head,
       diff: truncateDiff(diff),
       commits: (compare?.commits || []).map((c: any) => `${c.sha.slice(0, 7)} ${c.commit?.message?.split("\n")[0] ?? ""}`),
       openPrNumber: pr.number,
       openPrUrl: pr.html_url,
       changedFiles: (compare?.files || []).map((f: any) => f.filename).filter((f: string) => !isSensitivePath(f)),
+      fileTree: await githubFileTree(owner, repo, headSha),
     };
   }
 
@@ -116,6 +158,7 @@ async function collectGithub(project: ProjectRow): Promise<GitCollectResult> {
     diff: truncateDiff(diff),
     commits: commits.map((c: any) => `${c.sha.slice(0, 7)} ${c.commit?.message?.split("\n")[0] ?? ""}`),
     changedFiles: (detail?.files || []).map((f: any) => f.filename).filter((f: string) => !isSensitivePath(f)),
+    fileTree: await githubFileTree(owner, repo, headCommit.sha),
   };
 }
 

@@ -5,6 +5,7 @@ import { nimChat, extractJson } from "./nim-client";
 import { collectGitContext, ProjectRow } from "./git-collector";
 import { postReviewComments, CodeReviewIssue } from "./git-commenter";
 import { reviewSkill } from "./skills";
+import { setReviewStep } from "./review-progress";
 
 const BRAIN_PATH = "G:\\Meu Drive\\LLM-Brain\\active-context.md";
 const MODEL = process.env.LINTER_MODEL || "minimax-m3";
@@ -20,10 +21,15 @@ const systemPrompt = reviewSkill;
 
 function coerceResult(raw: string): CodeReviewResult {
   const o = JSON.parse(extractJson(raw));
+  const allIssues: CodeReviewIssue[] = Array.isArray(o.issues) ? o.issues : [];
+  // Anti-alucinação: issue sem evidência literal do diff é opinião, não finding — descarta.
+  const issues = allIssues.filter((i) => typeof i.evidence === "string" && i.evidence.trim().length > 0);
+  const dropped = allIssues.length - issues.length;
+  if (dropped > 0) console.warn(`[CodeReview] ${dropped} issue(s) descartada(s) por falta de evidence`);
   return {
     score: Number.isFinite(o.score) ? Math.max(0, Math.min(10, o.score)) : 0,
     summary: typeof o.summary === "string" ? o.summary : "",
-    issues: Array.isArray(o.issues) ? o.issues : [],
+    issues,
     refactors: Array.isArray(o.refactors) ? o.refactors : [],
   };
 }
@@ -51,27 +57,35 @@ function getBrainSnippet(): string {
   }
 }
 
-/** Executa o ciclo completo de code review autônomo para um projeto do registry. */
-export async function runCodeReviewForProject(project: ProjectRow): Promise<{ ok: boolean; reportId?: number; error?: string }> {
+/** Executa o ciclo completo de code review autônomo para um projeto do registry.
+ *  `force` pula o dedupe por commit — usado pra comparar modelos no mesmo commit. */
+export async function runCodeReviewForProject(project: ProjectRow, force = false): Promise<{ ok: boolean; reportId?: number; error?: string }> {
   try {
+    setReviewStep(project.slug, "coletando diff e contexto do git…");
     const git = await collectGitContext(project);
     if (!git.diff.trim()) {
       return { ok: false, error: "diff vazio — nada para revisar" };
     }
 
-    const existing = await pg.query(
-      `select id from codereview_reports where project_slug = $1 and commit_sha = $2 limit 1`,
-      [project.slug, git.commitSha]
-    );
-    if (existing.rows.length) {
-      return { ok: false, error: `commit ${git.commitSha} já revisado (report #${existing.rows[0].id})` };
+    if (!force) {
+      const existing = await pg.query(
+        `select id from codereview_reports where project_slug = $1 and commit_sha = $2 limit 1`,
+        [project.slug, git.commitSha]
+      );
+      if (existing.rows.length) {
+        return { ok: false, error: `commit ${git.commitSha} já revisado (report #${existing.rows[0].id})` };
+      }
     }
 
+    setReviewStep(project.slug, "reunindo contexto (handoffs, LLM-Brain)…");
     const [handoffs, brainSnippet] = [await getRecentHandoffs(project.slug), getBrainSnippet()];
 
     const userPayload = [
       `COMMIT: ${git.commitSha} | BRANCH: ${git.branch}`,
       `ARQUIVOS ALTERADOS:\n${git.changedFiles.join("\n")}`,
+      git.fileTree.length
+        ? `ÁRVORE DO REPO (todos os paths existentes — use para checar existência de arquivos/rotas antes de alegar ausência):\n${git.fileTree.join("\n")}`
+        : "",
       `COMMITS RECENTES:\n${git.commits.join("\n")}`,
       handoffs ? `HANDOFFS RECENTES DO PROJETO:\n${handoffs}` : "",
       brainSnippet ? `CONTEXTO ATIVO (LLM-Brain):\n${brainSnippet}` : "",
@@ -79,6 +93,7 @@ export async function runCodeReviewForProject(project: ProjectRow): Promise<{ ok
     ].filter(Boolean).join("\n\n---\n\n");
 
     const modelUsed = project.codereview_model || MODEL;
+    setReviewStep(project.slug, `pedindo análise pro modelo (${modelUsed})…`);
     const raw = await nimChat(
       [
         { role: "system", content: systemPrompt(project.display_name) },
@@ -89,6 +104,7 @@ export async function runCodeReviewForProject(project: ProjectRow): Promise<{ ok
 
     const result = coerceResult(raw);
 
+    setReviewStep(project.slug, "salvando relatório…");
     const { rows } = await pg.query(
       `insert into codereview_reports
         (project_slug, commit_sha, pr_number, pr_url, score, issues, summary, refactors, diff_lines, model_used)
@@ -103,6 +119,7 @@ export async function runCodeReviewForProject(project: ProjectRow): Promise<{ ok
     const reportId = rows[0].id;
 
     if (git.openPrNumber && project.git_owner && project.git_repo) {
+      setReviewStep(project.slug, `comentando no PR #${git.openPrNumber}…`);
       const commented = await postReviewComments(
         project.git_owner, project.git_repo, git.openPrNumber, git.commitSha, result.issues, result.summary
       );
