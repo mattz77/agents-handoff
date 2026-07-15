@@ -41,6 +41,8 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       # Agent API (Telegram via n8n / AnythingLLM agent skill) — rotas /agent/*
       - AGENT_API_TOKEN=${AGENT_API_TOKEN:-}
+      # Webhook do GitHub (workflow_run -> Daemon-CIFixAgent)
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
     extra_hosts:
       # Em Linux (vmaz) mapeia host.docker.internal p/ o gateway; no Docker Desktop já existe.
       - "host.docker.internal:host-gateway"

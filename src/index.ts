@@ -4,6 +4,7 @@ import { HandoffEnvelope } from "./domain/handoff";
 import { runHermesAudit } from "./hermes/linter";
 import { handleOpsRequest } from "./ops/server";
 import { handleAgentRequest } from "./ops/agent-api";
+import { handleGithubWebhook } from "./ops/github-webhook";
 import { startRagWatcher } from "./hermes/rag-watcher";
 import { startCodeReviewCron } from "./ops/codereview-cron";
 import { checkBrainSizeAlert } from "./ops/metrics";
@@ -17,7 +18,8 @@ console.log("🚀 Iniciando Antigravity Handoff Daemon v7.0...");
 
 // Servidor HTTP: /health (readiness real), /ops (painel) e /ops/api/* (REST)
 const server = http.createServer((req, res) => {
-  handleAgentRequest(req, res)
+  handleGithubWebhook(req, res)
+    .then((handled) => (handled ? true : handleAgentRequest(req, res)))
     .then((handled) => (handled ? true : handleOpsRequest(req, res)))
     .then((handled) => {
       if (!handled) {

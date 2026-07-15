@@ -13,6 +13,7 @@ import { RECOMMENDED_MODELS } from "./skills";
 
 const MODEL = process.env.LINTER_MODEL || "minimaxai/minimax-m3";
 const MAX_ATTEMPTS_PER_RUN = Number(process.env.CI_FIX_MAX_ATTEMPTS || 2);
+const MAX_ATTEMPTS_PER_PR_DAY = Number(process.env.CI_FIX_MAX_ATTEMPTS_PER_PR_DAY || 4);
 const MAX_LOG_CHARS = Number(process.env.CI_FIX_MAX_LOG_CHARS || 15_000);
 const MAX_CANDIDATE_FILES = 4;
 // Por padrão só arquivos de teste/config — nunca código de produção.
@@ -164,6 +165,16 @@ export async function runCiFix(opts: {
     );
     if (prev[0].n >= MAX_ATTEMPTS_PER_RUN) {
       return { ok: false, error: `run ${failedRun.id} já teve ${prev[0].n} tentativa(s) — limite ${MAX_ATTEMPTS_PER_RUN}, precisa de humano` };
+    }
+    // Guard anti-loop: cada fix gera run novo (run_id novo), então o cap por run não segura
+    // ciclo fix→falha→fix. Cap adicional por PR nas últimas 24h.
+    const { rows: prPrev } = await pg.query(
+      `select count(*)::int as n from ci_fix_attempts
+       where project_slug = $1 and pr_number = $2 and created_at > now() - interval '24 hours'`,
+      [project.slug, pr.number]
+    );
+    if (prPrev[0].n >= MAX_ATTEMPTS_PER_PR_DAY) {
+      return { ok: false, error: `PR #${pr.number} já teve ${prPrev[0].n} tentativa(s) de CI-fix em 24h — limite ${MAX_ATTEMPTS_PER_PR_DAY}, precisa de humano` };
     }
 
     const { rows: att } = await pg.query(
