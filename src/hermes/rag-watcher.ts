@@ -21,6 +21,8 @@ export function startRagWatcher() {
     ignored: /(^|[\/\\])\../,
     persistent: true,
     ignoreInitial: true,
+    usePolling: false, // bind mount local (llm-brain-mirror) e Drive (:ro) — evita polling caro em CPU
+    awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 200 }, // debounce writes parciais do Drive sync
   });
 
   watcher.on("all", (event, filePath) => {

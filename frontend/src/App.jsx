@@ -214,6 +214,14 @@ function App() {
     }
   }, [t.theme, t.density, t.accent]);
 
+  // Auto-refresh: seletor Manual/5s/15s no topbar — window.HD_fetchAll é exportado por data-real.js
+  React.useEffect(() => {
+    const ms = interval_ === 1 ? 5000 : interval_ === 2 ? 15000 : 0;
+    if (!ms || !window.HD_fetchAll) return;
+    const id = setInterval(() => window.HD_fetchAll(), ms);
+    return () => clearInterval(id);
+  }, [interval_, hdReady]);
+
   const panel = !hdReady ? null : tab === 'overview'
     ? React.createElement(OverviewPanel, { onInspect: setInspect, animatedFlow: t.flowAnimated, onPickStatus: pickStatus })
     : tab === 'handoffs'

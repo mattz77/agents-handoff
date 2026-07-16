@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: handoff-daemon
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.5
     environment:
       - NODE_ENV=production
       - REDIS_PASS_FILE=/run/secrets/redis_pass
@@ -78,6 +80,8 @@ services:
     image: redis:7-alpine
     container_name: handoff-redis-master
     command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); redis-server --appendonly yes --appendfsync everysec --maxmemory 2gb --maxmemory-policy noeviction --requirepass "$$PASS"'
+    mem_limit: 2200m
+    cpus: 1
     secrets:
       - redis_pass
     volumes:
@@ -94,6 +98,8 @@ services:
   redis-replica-1: &replica
     image: redis:7-alpine
     command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); redis-server --appendonly yes --appendfsync everysec --replicaof handoff-redis-master 6379 --masterauth "$$PASS" --requirepass "$$PASS"'
+    mem_limit: 2200m
+    cpus: 1
     secrets:
       - redis_pass
     depends_on:
@@ -108,6 +114,8 @@ services:
   sentinel-1: &sentinel
     image: redis:7-alpine
     command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); mkdir -p /etc/redis; echo "sentinel resolve-hostnames yes" > /etc/redis/sentinel.conf; echo "sentinel monitor mymaster handoff-redis-master 6379 2" >> /etc/redis/sentinel.conf; echo "sentinel auth-pass mymaster $$PASS" >> /etc/redis/sentinel.conf; redis-sentinel /etc/redis/sentinel.conf'
+    mem_limit: 64m
+    cpus: 0.3
     secrets:
       - redis_pass
     depends_on:
@@ -124,6 +132,8 @@ services:
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy
     container_name: docker-socket-proxy
+    mem_limit: 64m
+    cpus: 0.2
     environment:
       - CONTAINERS=1
       - INFO=1
