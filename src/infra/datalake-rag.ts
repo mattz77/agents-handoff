@@ -114,6 +114,24 @@ export class DataLakeRAGService {
         }
     }
 
+    // Remove todos os chunks de um arquivo antes de reindexar — sem isso, cada save do
+    // mesmo arquivo (watcher live) ou cada restart do daemon (index inicial) acumula
+    // chunks duplicados/obsoletos e degrada a busca semântica.
+    private async deleteDocument(filePath: string): Promise<void> {
+        const lancedb = getLancedb();
+        if (!lancedb) return;
+        try {
+            const db = await lancedb.connect(this.vectorStorePath);
+            const tableNames = await db.tableNames();
+            if (!tableNames.includes('knowledge_base')) return;
+            const table = await db.openTable('knowledge_base');
+            const escaped = filePath.replace(/'/g, "''");
+            await table.delete(`filePath = '${escaped}'`);
+        } catch (err) {
+            console.error('[RAG] Falha ao remover chunks antigos:', err);
+        }
+    }
+
     public async indexDocument(filePath: string, content: string): Promise<boolean> {
         console.log(`[RAG] Indexando arquivo no DataLake LanceDB: ${filePath}`);
 
@@ -122,6 +140,7 @@ export class DataLakeRAGService {
             if (!lancedb) return false;
             const db = await lancedb.connect(this.vectorStorePath);
             const chunks = chunkMarkdown(filePath, content);
+            await this.deleteDocument(filePath); // idempotente: upsert por arquivo (delete + insert)
             if (chunks.length === 0) return true;
 
             const data = [];
@@ -202,3 +221,7 @@ export class DataLakeRAGService {
         }
     }
 }
+
+// Singleton compartilhado — server.ts (endpoint de busca) e rag-watcher.ts (ingestão) devem
+// falar com a MESMA instância pra evitar clientes GoogleGenAI duplicados.
+export const ragService = new DataLakeRAGService();

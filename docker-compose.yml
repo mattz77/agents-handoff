@@ -55,7 +55,10 @@ services:
       # container. POST /ops/api/brain/tasks escreve via publish-handoff.js (docker exec no host,
       # fora do container) até resolver o compartilhamento do Drive com permissão de escrita.
       - "C:/Users/olive/llm-brain-mirror:/data/llm-brain:rw"
-      - "G:/Meu Drive/Luma_DataLake:/data/datalake:ro"
+      # G:\ é drive virtual do Google Drive Streaming — Docker Desktop/WSL2 não consegue bind
+      # mount de drives de rede virtuais (mesma classe de bug do :rw acima). Monta o mirror local
+      # (./data/datalake, sincronizado por scripts/sync-data.ps1 via Task Scheduler) em vez do G:\ direto.
+      - "./data/datalake:/data/datalake:ro"
       - C:/Users/olive/Documents/Luma-APP:/repo:ro
       - rag-vectorstore:/data/vectorstore
     ports:

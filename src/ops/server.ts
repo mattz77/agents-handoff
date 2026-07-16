@@ -30,9 +30,7 @@ import { RECOMMENDED_MODELS } from "../hermes/skills";
 import { replayFromDlq } from "./replay";
 import { transitionStatus } from "../outbox";
 import { verifyAccess, accessConfigured } from "./cf-access";
-import { DataLakeRAGService } from "../infra/datalake-rag";
-
-const ragService = new DataLakeRAGService();
+import { ragService } from "../infra/datalake-rag";
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   const s = JSON.stringify(body);
@@ -147,11 +145,16 @@ export async function handleOpsRequest(
     return true;
   }
   // Revalida o JWT do Cloudflare Access (defesa caso alguém atinja o origin direto).
-  const isLocalhost = req.headers.host?.startsWith("localhost:");
-  const access = await verifyAccess(req);
-  if (!isLocalhost && !access.ok) {
-    json(res, 401, { error: `Acesso negado: ${access.error}` });
-    return true;
+  // Localhost (host:3000, docker exec, tests) pula a verificação — sem isso o fetch ao JWKS
+  // do CF pode travar o request inteiro se o DNS do container estiver instável.
+  const isLocalhost = req.headers.host?.startsWith("localhost:") || req.headers.host === "localhost"
+    || req.headers.host?.startsWith("127.0.0.1:");
+  if (!isLocalhost) {
+    const access = await verifyAccess(req);
+    if (!access.ok) {
+      json(res, 401, { error: `Acesso negado: ${access.error}` });
+      return true;
+    }
   }
 
   try {
