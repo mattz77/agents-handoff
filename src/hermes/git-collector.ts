@@ -84,6 +84,14 @@ async function githubFetch(url: string, accept: string, init?: RequestInit): Pro
         },
         signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
       });
+      // 502/503/504 são outages transitórios do GitHub/Fastly (ex.: página HTML de erro
+      // "Hello future GitHubber…") — sem retry aqui, qualquer review/ataque na hora certa falha
+      // com HTML jogado direto na tela em vez de simplesmente tentar de novo.
+      if ([502, 503, 504].includes(res.status) && attempt < GITHUB_MAX_RETRIES) {
+        console.warn(`[GitCollector] GitHub respondeu ${res.status} (tentativa ${attempt + 1}), retry em ${2 ** attempt}s…`);
+        await sleep(1000 * 2 ** attempt);
+        continue;
+      }
       return res;
     } catch (e) {
       lastErr = e as Error;
