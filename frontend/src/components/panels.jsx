@@ -755,8 +755,29 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const [attacks, setAttacks] = React.useState([]);
     const [attacking, setAttacking] = React.useState(false);
     const [merging, setMerging] = React.useState(false);
+    const [prs, setPrs] = React.useState(null);
     const pollRef = React.useRef(null);
     const timeoutRef = React.useRef(null);
+
+    // Slug do projeto exibido — filtro ativo, ou projeto do report selecionado quando em "Todos".
+    const shownSlug = React.useMemo(() => {
+      if (projectFilter) return projectFilter;
+      const all = (crData && crData.reports) || [];
+      const l = all[Math.min(selected, Math.max(all.length - 1, 0))] || all[0];
+      return (l && l.project_slug) || '';
+    }, [crData, projectFilter, selected]);
+
+    // PRs abertos + últimos mergeados do projeto exibido.
+    React.useEffect(() => {
+      if (!shownSlug) { setPrs(null); return; }
+      let alive = true;
+      setPrs(null);
+      fetch('/ops/api/codereview/prs?slug=' + encodeURIComponent(shownSlug))
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (alive) setPrs(d); })
+        .catch(() => { if (alive) setPrs(null); });
+      return () => { alive = false; };
+    }, [shownSlug]);
 
     const load = React.useCallback(() => {
       return fetch('/ops/api/codereview')
@@ -942,6 +963,9 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     }
 
     const latest = reports[Math.min(selected, Math.max(reports.length - 1, 0))] || reports[0];
+    // Ataques só do projeto exibido — banner "Ciclo aprovado" de handoff-daemon não deve
+    // aparecer quando o usuário está olhando luma (e vice-versa).
+    const projAttacks = attacks.filter(a => a.project_slug === latest.project_slug);
     const issues = Array.isArray(latest.issues) ? latest.issues : [];
     const refactors = Array.isArray(latest.refactors) ? latest.refactors : [];
 
@@ -989,22 +1013,22 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         React.createElement('span', { className: 'cr-attack__dot' }), reviewStep),
       runError && React.createElement('div', { className: 'alert cr-run-error' },
         React.createElement(Icon, { name: 'alert', size: 14 }), ' ', runError),
-      attacks.length > 0 && (attacks[0].status === 'running' || attacking) && React.createElement(Card, { className: 'cr-attack' },
+      projAttacks.length > 0 && (projAttacks[0].status === 'running' || attacking) && React.createElement(Card, { className: 'cr-attack' },
         React.createElement('div', { className: 'cr-attack__head' },
           React.createElement('span', { className: 'cr-attack__title' },
             React.createElement(Icon, { name: 'zap', size: 14 }),
-            ' Rodada ', attacks[0].round || 1, ' — ', attacks[0].project_slug,
-            attacks[0].pr_number && React.createElement('span', { className: 'muted' }, ' · PR #' + attacks[0].pr_number)),
-          React.createElement('span', { className: 'mono' }, (attacks[0].issues_fixed || 0) + '/' + (attacks[0].issues_total || 0) + ' corrigidas')),
+            ' Rodada ', projAttacks[0].round || 1, ' — ', projAttacks[0].project_slug,
+            projAttacks[0].pr_number && React.createElement('span', { className: 'muted' }, ' · PR #' + projAttacks[0].pr_number)),
+          React.createElement('span', { className: 'mono' }, (projAttacks[0].issues_fixed || 0) + '/' + (projAttacks[0].issues_total || 0) + ' corrigidas')),
         React.createElement('div', { className: 'cr-attack__step mono' },
-          React.createElement('span', { className: 'cr-attack__dot' }), ' ', attacks[0].current_step || 'iniciando…'),
+          React.createElement('span', { className: 'cr-attack__dot' }), ' ', projAttacks[0].current_step || 'iniciando…'),
         React.createElement('div', { className: 'cr-attack__bar' },
-          React.createElement('span', { style: { width: Math.round(100 * (attacks[0].issues_fixed || 0) / Math.max(attacks[0].issues_total || 1, 1)) + '%' } })),
-        Array.isArray(attacks[0].log) && attacks[0].log.slice(-3).map((l, i) =>
+          React.createElement('span', { style: { width: Math.round(100 * (projAttacks[0].issues_fixed || 0) / Math.max(projAttacks[0].issues_total || 1, 1)) + '%' } })),
+        Array.isArray(projAttacks[0].log) && projAttacks[0].log.slice(-3).map((l, i) =>
           React.createElement('div', { key: i, className: 'cr-attack__log mono' },
             `[${l.status}] ${l.file}${l.line != null ? ':' + l.line : ''} — ${l.detail}`))),
-      attacks.length > 0 && attacks[0].status !== 'running' && !attacking && (() => {
-        const a = attacks[0];
+      projAttacks.length > 0 && projAttacks[0].status !== 'running' && !attacking && (() => {
+        const a = projAttacks[0];
         const converged = a.verify_status === 'approved';
         const needsHuman = a.verify_status === 'needs_human';
         const tone = a.status !== 'done' ? 'fail' : converged ? 'ok' : needsHuman ? 'warn' : 'fail';
@@ -1053,6 +1077,24 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             refactors.length > 0 && React.createElement('div', { className: 'cr-sev__row' },
               React.createElement(StatusBadge, { status: 'info' }, 'refactors'),
               React.createElement('span', { className: 'mono cr-sev__n' }, refactors.length))))),
+
+      prs && ((prs.open || []).length > 0 || (prs.merged || []).length > 0) && React.createElement(Card, { className: 'cr-prs' },
+        React.createElement('div', { className: 'cr-prs__head' },
+          React.createElement(Icon, { name: 'split', size: 14 }),
+          React.createElement('span', { className: 'cr-prs__title' }, 'Pull Requests — ' + (latest.display_name || latest.project_slug))),
+        (prs.open || []).length > 0 && React.createElement('div', { className: 'cr-prs__group' },
+          React.createElement('div', { className: 'cr-prs__lbl' }, 'Abertos'),
+          prs.open.map(p => React.createElement('div', { key: 'o' + p.number, className: 'cr-prs__row' },
+            React.createElement(StatusBadge, { status: p.draft ? 'info' : 'warning' }, p.draft ? 'draft' : 'aberto'),
+            React.createElement('a', { href: p.url, target: '_blank', rel: 'noreferrer', className: 'cr-prs__link' }, '#' + p.number + ' ' + p.title),
+            React.createElement('span', { className: 'mono muted cr-prs__meta' }, p.head + ' → ' + p.base)))),
+        (prs.merged || []).length > 0 && React.createElement('div', { className: 'cr-prs__group' },
+          React.createElement('div', { className: 'cr-prs__lbl' }, 'Últimos mergeados'),
+          prs.merged.map(p => React.createElement('div', { key: 'm' + p.number, className: 'cr-prs__row' },
+            React.createElement(StatusBadge, { status: 'good' }, 'mergeado'),
+            React.createElement('a', { href: p.url, target: '_blank', rel: 'noreferrer', className: 'cr-prs__link' }, '#' + p.number + ' ' + p.title),
+            React.createElement('span', { className: 'mono muted cr-prs__meta' },
+              new Date(p.mergedAt).toLocaleDateString('pt-BR')))))),
 
       React.createElement('div', { className: 'grid-side' },
         React.createElement('div', { className: 'col' },

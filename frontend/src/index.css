@@ -514,6 +514,14 @@ body { margin: 0; background: var(--background); color: var(--foreground); font-
 .cr-attack-result--warn{color:var(--warning)}
 .cr-attack-result__notes{flex-basis:100%;margin-top:6px;font-size:var(--text-sm);line-height:1.55;color:var(--foreground);white-space:pre-wrap}
 .cr-attack-result__proj{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.03em;padding:2px 6px;border-radius:4px;background:var(--muted);color:var(--foreground)}
+.cr-prs{padding:var(--card-pad);display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.cr-prs__head{display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px}
+.cr-prs__lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);margin-bottom:4px}
+.cr-prs__group{display:flex;flex-direction:column;gap:4px}
+.cr-prs__row{display:flex;align-items:center;gap:8px;font-size:13px;min-width:0}
+.cr-prs__link{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--foreground);text-decoration:none}
+.cr-prs__link:hover{text-decoration:underline}
+.cr-prs__meta{font-size:11px;flex-shrink:0}
 .cr-attack{padding:var(--card-pad);display:flex;flex-direction:column;gap:8px}
 .cr-attack__head{display:flex;justify-content:space-between;align-items:center;font-size:14px}
 .cr-attack__title{display:inline-flex;align-items:center;gap:6px;font-weight:600}
@@ -792,6 +800,31 @@ body { margin: 0; background: var(--background); color: var(--foreground); font-
 .alert__count{margin-left:7px;font-size:10px;font-weight:700;color:var(--warning);
   background:color-mix(in srgb,var(--warning) 14%,transparent);border:1px solid color-mix(in srgb,var(--warning) 30%,transparent);
   padding:1px 6px;border-radius:var(--radius-full);vertical-align:1px}
+
+/* --- Kanban de tasks delegadas a agente --- */
+.kanban{display:grid;grid-template-columns:repeat(5,minmax(220px,1fr));gap:12px;overflow-x:auto;padding-bottom:4px}
+.kanban-col{display:flex;flex-direction:column;min-width:220px;background:color-mix(in srgb,var(--foreground) 3%,transparent);
+  border:1px solid var(--border);border-radius:var(--radius-md);min-height:120px}
+.kanban-col__head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;
+  font-size:var(--text-2xs);font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-foreground);
+  border-bottom:1px solid var(--border)}
+.kanban-col__count{background:color-mix(in srgb,var(--foreground) 10%,transparent);border-radius:var(--radius-full);
+  padding:1px 7px;font-size:10px}
+.kanban-col__body{display:flex;flex-direction:column;gap:8px;padding:10px;flex:1}
+.kanban-col__empty{color:var(--muted-foreground);font-size:var(--text-2xs);text-align:center;padding:16px 0;opacity:.5}
+.kanban-card{background:var(--card,var(--background));border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:10px 12px;cursor:pointer;transition:border-color .15s,transform .15s}
+.kanban-card:hover{border-color:var(--brand-accent);transform:translateY(-1px)}
+.kanban-card__title{font-size:var(--text-xs);font-weight:600;margin-bottom:6px}
+.kanban-card__meta{display:flex;align-items:center;justify-content:space-between;font-size:10px}
+.kanban-card__error{margin-top:6px;font-size:10px;color:var(--critical)}
+.kanban-card__pr{display:inline-block;margin-top:6px;font-size:10px;color:var(--brand-accent)}
+.kanban-card__model{margin-top:4px;font-size:9px;opacity:.55}
+.kanban-card__retry{display:block;width:100%;margin-top:8px;padding:5px 0;border:1px solid var(--border);
+  border-radius:var(--radius-sm);background:transparent;color:var(--muted-foreground);font-family:var(--font-sans);
+  font-size:var(--text-2xs);font-weight:600;cursor:pointer;transition:color .15s,border-color .15s}
+.kanban-card__retry:hover{color:var(--brand-accent);border-color:var(--brand-accent)}
+@media (max-width:900px){.kanban{grid-template-columns:1fr}}
 
 /* --- Command palette (Ctrl/⌘K) --- */
 .cmdk-ov{position:fixed;inset:0;background:rgb(0 0 0/.55);backdrop-filter:blur(4px);z-index:120;animation:cmdk-ov-in .18s ease}
