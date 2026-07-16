@@ -168,8 +168,8 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
           React.createElement('div', { className: 'alert__meta mono' },
             a.level + ' · ' + (a.count > 1 ? 'último ' + fmtAgo(a.last) + ' · desde ' + fmtAgo(a.first) : fmtAgo(a.last)))),
       )),
-      groups.length > CAP && React.createElement('button', { className: 'tbl-more', onClick: () => setExpanded((v) => !v) },
-        expanded ? 'Mostrar menos' : 'Mostrar mais ' + (groups.length - CAP) + ' alertas'),
+      groups.length > ALERTS_CAP && React.createElement('button', { className: 'tbl-more', onClick: () => setExpanded((v) => !v) },
+        expanded ? 'Mostrar menos' : 'Mostrar mais ' + (groups.length - ALERTS_CAP) + ' alertas'),
     );
   }
 
@@ -836,7 +836,8 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             })
             .catch(() => {});
         }, 1500);
-        setTimeout(() => clearInterval(poll), 5 * 60 * 1000);
+        const timeout = setTimeout(() => clearInterval(poll), 5 * 60 * 1000);
+        return () => { clearInterval(poll); clearTimeout(timeout); };
       }
     };
 
