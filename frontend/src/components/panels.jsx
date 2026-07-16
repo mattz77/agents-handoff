@@ -157,8 +157,8 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       else { const ng = { ...a, count: 1, last: a.at, first: a.at }; byKey.set(key, ng); groups.push(ng); }
     }
     groups.sort((x, y) => (y.last || '').localeCompare(x.last || ''));
-    const CAP = 6;
-    const visible = expanded ? groups : groups.slice(0, CAP);
+    const ALERTS_CAP = 6;
+    const visible = expanded ? groups : groups.slice(0, ALERTS_CAP);
     return React.createElement('div', { className: 'alerts' },
       visible.map((a, i) => React.createElement('div', { key: i, className: 'alert' },
         React.createElement('span', { className: cls('alert__icon', 'tone-' + tone[a.level]) }, React.createElement(Icon, { name: iconFor[a.level], size: 14 })),
@@ -168,8 +168,8 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
           React.createElement('div', { className: 'alert__meta mono' },
             a.level + ' · ' + (a.count > 1 ? 'último ' + fmtAgo(a.last) + ' · desde ' + fmtAgo(a.first) : fmtAgo(a.last)))),
       )),
-      groups.length > CAP && React.createElement('button', { className: 'tbl-more', onClick: () => setExpanded((v) => !v) },
-        expanded ? 'Mostrar menos' : 'Mostrar mais ' + (groups.length - CAP) + ' alertas'),
+      groups.length > ALERTS_CAP && React.createElement('button', { className: 'tbl-more', onClick: () => setExpanded((v) => !v) },
+        expanded ? 'Mostrar menos' : 'Mostrar mais ' + (groups.length - ALERTS_CAP) + ' alertas'),
     );
   }
 
@@ -755,6 +755,8 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const [attacks, setAttacks] = React.useState([]);
     const [attacking, setAttacking] = React.useState(false);
     const [merging, setMerging] = React.useState(false);
+    const pollRef = React.useRef(null);
+    const timeoutRef = React.useRef(null);
 
     const load = React.useCallback(() => {
       return fetch('/ops/api/codereview')
@@ -774,7 +776,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         .catch(() => []);
     }, []);
 
-    React.useEffect(() => { load(); loadAttacks(); }, [load, loadAttacks]);
+    React.useEffect(() => { load(); loadAttacks(); return () => { if (pollRef.current) clearInterval(pollRef.current); if (timeoutRef.current) clearTimeout(timeoutRef.current); }; }, [load, loadAttacks]);
     React.useEffect(() => {
       fetch('/ops/api/codereview/models').then(r => r.json())
         .then(d => {
@@ -831,16 +833,18 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         .finally(() => { setRunning(false); setReviewStep(''); });
 
       if (targetSlug) {
-        const poll = setInterval(() => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        pollRef.current = setInterval(() => {
           fetch(`/ops/api/codereview/run-status?slug=${encodeURIComponent(targetSlug)}`)
             .then(r => r.json())
             .then(p => {
               if (p && p.status === 'running') setReviewStep(p.step || '');
-              if (p && p.status !== 'running') clearInterval(poll);
+              if (p && p.status !== 'running') { clearInterval(pollRef.current); pollRef.current = null; }
             })
             .catch(() => {});
         }, 1500);
-        setTimeout(() => clearInterval(poll), 5 * 60 * 1000);
+        timeoutRef.current = setTimeout(() => { clearInterval(pollRef.current); pollRef.current = null; }, 5 * 60 * 1000);
       }
     };
 
