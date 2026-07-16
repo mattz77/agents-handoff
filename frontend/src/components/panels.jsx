@@ -157,8 +157,8 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       else { const ng = { ...a, count: 1, last: a.at, first: a.at }; byKey.set(key, ng); groups.push(ng); }
     }
     groups.sort((x, y) => (y.last || '').localeCompare(x.last || ''));
-    const CAP = 6;
-    const visible = expanded ? groups : groups.slice(0, CAP);
+    const ALERTS_CAP = 6;
+    const visible = expanded ? groups : groups.slice(0, ALERTS_CAP);
     return React.createElement('div', { className: 'alerts' },
       visible.map((a, i) => React.createElement('div', { key: i, className: 'alert' },
         React.createElement('span', { className: cls('alert__icon', 'tone-' + tone[a.level]) }, React.createElement(Icon, { name: iconFor[a.level], size: 14 })),
