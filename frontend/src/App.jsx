@@ -84,7 +84,8 @@ function Header({ tab, onRefresh, updated, interval, setInterval_, onSearchToggl
       React.createElement('p', { className: 'topbar__sub' }, subs[tab])),
     React.createElement('div', { className: 'topbar__r' },
       React.createElement(Button, { variant: 'outline', size: 'sm', onClick: onSearchToggle, style: { marginRight: '8px' } },
-        React.createElement(Icon, { name: 'search', size: 14 }), React.createElement('span', { className: 'btn-search-txt' }, ' Busca Semântica')),
+        React.createElement(Icon, { name: 'search', size: 14 }), React.createElement('span', { className: 'btn-search-txt' }, ' Busca Semântica'),
+        React.createElement('kbd', { className: 'kbd topbar__kbd' }, 'Ctrl K')),
       React.createElement('div', { className: 'seg' },
         ['Manual', '5s', '15s'].map((o, i) => React.createElement('button', {
           key: o, className: cls('seg__btn', interval === i && 'seg__btn--on'), onClick: () => setInterval_(i),
@@ -127,6 +128,66 @@ function BottomNav({ tab, setTab }) {
   );
 }
 
+// Command palette (Ctrl/⌘K) — navegação e ações rápidas sem tirar a mão do teclado
+function CommandPalette({ open, onClose, setTab, onRefresh, onSearch }) {
+  const [q, setQ] = React.useState('');
+  const [sel, setSel] = React.useState(0);
+  const inputRef = React.useRef(null);
+
+  const commands = React.useMemo(() => [
+    ...NAV.map((n) => ({ id: 'nav:' + n.id, icon: n.icon, label: 'Ir para ' + n.label, hint: 'seção', run: () => setTab(n.id) })),
+    { id: 'act:refresh', icon: 'refresh', label: 'Atualizar métricas', hint: 'ação', run: onRefresh },
+    { id: 'act:search', icon: 'search', label: 'Busca Semântica no LLM Brain', hint: 'ação', run: onSearch },
+  ], [setTab, onRefresh, onSearch]);
+
+  const filtered = q
+    ? commands.filter((c) => c.label.toLowerCase().includes(q.toLowerCase()))
+    : commands;
+
+  React.useEffect(() => { if (open) { setQ(''); setSel(0); setTimeout(() => inputRef.current?.focus(), 30); } }, [open]);
+  React.useEffect(() => { setSel(0); }, [q]);
+
+  const runSel = (c) => { if (!c) return; c.run(); onClose(); };
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => Math.min(s + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); runSel(filtered[sel]); }
+    else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+  };
+
+  // Listener global enquanto aberta — setas/Enter/Esc funcionam mesmo se o foco sair do input
+  React.useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (e.target !== inputRef.current) onKey(e); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  });
+
+  if (!open) return null;
+
+  return React.createElement(React.Fragment, null,
+    React.createElement('div', { className: 'cmdk-ov', onClick: onClose }),
+    React.createElement('div', { className: 'cmdk', role: 'dialog', 'aria-label': 'Paleta de comandos' },
+      React.createElement('div', { className: 'cmdk__inputrow' },
+        React.createElement(Icon, { name: 'search', size: 16 }),
+        React.createElement('input', {
+          ref: inputRef, className: 'cmdk__input', placeholder: 'Digite um comando ou seção…',
+          value: q, onChange: (e) => setQ(e.target.value), onKeyDown: onKey,
+        }),
+        React.createElement('kbd', { className: 'kbd' }, 'esc')),
+      React.createElement('div', { className: 'cmdk__list' },
+        filtered.length === 0
+          ? React.createElement('div', { className: 'empty' }, 'Nenhum comando.')
+          : filtered.map((c, i) => React.createElement('button', {
+            key: c.id, className: cls('cmdk__item', i === sel && 'cmdk__item--on'),
+            onMouseEnter: () => setSel(i), onClick: () => runSel(c),
+          },
+            React.createElement(Icon, { name: c.icon, size: 15 }),
+            React.createElement('span', { className: 'cmdk__label' }, c.label),
+            React.createElement('span', { className: 'cmdk__hint' }, c.hint))))),
+  );
+}
+
 function Toast({ toast }) {
   if (!toast) return null;
   return React.createElement('div', { className: cls('toast', 'toast--' + (toast.kind || 'info'), 'show') },
@@ -155,6 +216,7 @@ function App() {
   const [interval_, setInterval_] = React.useState(1);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [cmdkOpen, setCmdkOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searchResults, setSearchResults] = React.useState(null);
 
@@ -214,6 +276,15 @@ function App() {
     }
   }, [t.theme, t.density, t.accent]);
 
+  // Atalho global Ctrl/⌘K — abre a paleta de comandos
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCmdkOpen((v) => !v); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Auto-refresh: seletor Manual/5s/15s no topbar — window.HD_fetchAll é exportado por data-real.js
   React.useEffect(() => {
     const ms = interval_ === 1 ? 5000 : interval_ === 2 ? 15000 : 0;
@@ -261,6 +332,10 @@ function App() {
         React.createElement('p', { style: { margin: 0, fontSize: '13px' } }, r.snippet)
       )) : null
     ),
+    React.createElement(CommandPalette, {
+      open: cmdkOpen, onClose: () => setCmdkOpen(false), setTab: onTabChange,
+      onRefresh: refresh, onSearch: () => setSearchOpen(true),
+    }),
     React.createElement(Inspector, { handoff: inspect, onClose: () => setInspect(null) }),
     React.createElement(Toast, { toast }),
     React.createElement(TweaksPanel, null,

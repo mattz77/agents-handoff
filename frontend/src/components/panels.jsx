@@ -142,16 +142,34 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     );
   }
 
+  // Agrupa alertas idênticos (mesma msg + level) num só card com contador ×N —
+  // o mesmo warn recorrente (ex: brain-compact) não vira uma lista de 30 linhas iguais.
   function AlertsList({ alerts }) {
+    const [expanded, setExpanded] = React.useState(false);
     const tone = { CRITICAL: 'critical', WARNING: 'warning', INFO: 'info' };
     const iconFor = { CRITICAL: 'xCircle', WARNING: 'alert', INFO: 'circleDot' };
+    const groups = [];
+    const byKey = new Map();
+    for (const a of alerts || []) {
+      const key = a.level + '|' + a.msg;
+      const g = byKey.get(key);
+      if (g) { g.count++; if (a.at > g.last) g.last = a.at; if (a.at < g.first) g.first = a.at; }
+      else { const ng = { ...a, count: 1, last: a.at, first: a.at }; byKey.set(key, ng); groups.push(ng); }
+    }
+    groups.sort((x, y) => (y.last || '').localeCompare(x.last || ''));
+    const CAP = 6;
+    const visible = expanded ? groups : groups.slice(0, CAP);
     return React.createElement('div', { className: 'alerts' },
-      (alerts || []).map((a, i) => React.createElement('div', { key: i, className: 'alert' },
+      visible.map((a, i) => React.createElement('div', { key: i, className: 'alert' },
         React.createElement('span', { className: cls('alert__icon', 'tone-' + tone[a.level]) }, React.createElement(Icon, { name: iconFor[a.level], size: 14 })),
         React.createElement('div', { className: 'alert__body' },
-          React.createElement('div', { className: 'alert__msg' }, a.msg),
-          React.createElement('div', { className: 'alert__meta mono' }, a.level + ' · ' + fmtAgo(a.at))),
+          React.createElement('div', { className: 'alert__msg' }, a.msg,
+            a.count > 1 && React.createElement('span', { className: 'alert__count mono' }, '×' + a.count)),
+          React.createElement('div', { className: 'alert__meta mono' },
+            a.level + ' · ' + (a.count > 1 ? 'último ' + fmtAgo(a.last) + ' · desde ' + fmtAgo(a.first) : fmtAgo(a.last)))),
       )),
+      groups.length > CAP && React.createElement('button', { className: 'tbl-more', onClick: () => setExpanded((v) => !v) },
+        expanded ? 'Mostrar menos' : 'Mostrar mais ' + (groups.length - CAP) + ' alertas'),
     );
   }
 
@@ -208,13 +226,13 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             actions: React.createElement('div', { className: 'chip-row' },
               filter && React.createElement('button', { className: 'fchip fchip--on', onClick: () => setFilter(null) }, statusMeta(filter).label, React.createElement(Icon, { name: 'x', size: 11 })),
               !filter && statuses.slice(0, 4).map((s) => React.createElement('button', { key: s, className: 'fchip', onClick: () => setFilter(s) }, statusMeta(s).label))),
-          }, React.createElement(DataTable, { cols: hCols, rows })),
+          }, React.createElement(DataTable, { cols: hCols, rows, pageSize: 25 })),
           React.createElement(Section, { icon: 'split', title: 'Dead Letter Queue', count: dlq.length, accent: 'var(--critical)',
             actions: React.createElement('span', { className: 'sub-note' }, 'clique na linha pra ver a falha · replay reinjeta no stream') },
             React.createElement(DataTable, { cols: dlqCols, rows: dlqRows, empty: 'DLQ vazia - nada a reprocessar.' }),
             dlqSel && React.createElement(DlqDetail, { item: dlqSel, onClose: () => setDlqSel(null), onReplay: (it) => { onReplay(it); setDlqSel(null); } })),
           React.createElement(Section, { icon: 'inbox', title: 'Outbox represado', count: HD.outbox.filter((o) => o.status !== 'SENT').length, accent: 'var(--toil)' },
-            React.createElement(DataTable, { cols: obCols, rows: HD.outbox })),
+            React.createElement(DataTable, { cols: obCols, rows: HD.outbox, pageSize: 20 })),
         ),
         React.createElement('div', { className: 'col sticky-col' },
           React.createElement(Section, { icon: 'shield', title: 'Circuit breakers', count: (HD.breakers || []).length },
@@ -279,12 +297,13 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
 
   function StreamBlock() {
     const s = window.HD.stream;
-    const pct = Math.min(s.length / s.maxlen * 100, 100);
-    const rows = [['Comprimento', s.length.toLocaleString('pt-BR')], ['Consumer groups', s.groups], ['Pendentes (PEL)', s.pending], ['MAXLEN', '~' + (s.maxlen / 1000) + 'k']];
+    const hasMax = Number.isFinite(s.maxlen) && s.maxlen > 0;
+    const pct = hasMax ? Math.min(s.length / s.maxlen * 100, 100) : 0;
+    const rows = [['Comprimento', s.length.toLocaleString('pt-BR')], ['Consumer groups', s.groups], ['Pendentes (PEL)', s.pending], ['MAXLEN', hasMax ? '~' + (s.maxlen / 1000) + 'k' : 'sem limite']];
     return React.createElement('div', { className: 'stream' },
       React.createElement('div', { className: 'stream__bar' },
         React.createElement('span', { className: 'stream__fill', style: { width: pct + '%' } })),
-      React.createElement('div', { className: 'stream__pct mono' }, pct.toFixed(0) + '% do MAXLEN'),
+      React.createElement('div', { className: 'stream__pct mono' }, hasMax ? pct.toFixed(0) + '% do MAXLEN' : 'stream sem MAXLEN configurado'),
       React.createElement('div', { className: 'kv' },
         (rows || []).map(([k, v], i) => React.createElement('div', { key: i, className: 'kv__row' },
           React.createElement('span', { className: 'kv__k' }, k),
