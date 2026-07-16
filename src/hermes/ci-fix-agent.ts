@@ -152,6 +152,13 @@ export async function runCiFix(opts: {
     if (!pr || pr.state !== "open") return { ok: false, error: "nenhum PR aberto pra corrigir CI" };
     const branch: string = pr.head.ref;
     const headSha: string = pr.head.sha;
+    // Guard: nunca commitar direto na branch default. O PR de auditoria (aberto pelo
+    // Daemon-CodeReview quando não há PR de feature) usa head=branch default de propósito —
+    // esse endpoint escreve via contents API direto no branch do head, então sem esse guard
+    // um workflow_run falho associado ao PR de auditoria pushernaria fix direto em main.
+    if (branch === project.default_branch) {
+      return { ok: false, error: `PR #${pr.number} tem head=${branch} (branch padrão) — não commito CI-fix direto nela, é PR de auditoria` };
+    }
 
     // 2. Run falho do head atual (só o commit mais recente — falha antiga já foi superada)
     const runs = await gh(`/repos/${owner}/${repo}/actions/runs?head_sha=${headSha}&per_page=10`);

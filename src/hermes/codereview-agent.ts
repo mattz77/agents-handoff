@@ -106,7 +106,7 @@ function getBrainSnippet(): string {
 
 /** Executa o ciclo completo de code review autônomo para um projeto do registry.
  *  `force` pula o dedupe por commit — usado pra comparar modelos no mesmo commit. */
-export async function runCodeReviewForProject(project: ProjectRow, force = false): Promise<{ ok: boolean; reportId?: number; error?: string }> {
+export async function runCodeReviewForProject(project: ProjectRow, force = false): Promise<{ ok: boolean; reportId?: number; error?: string; alreadyReviewed?: boolean }> {
   try {
     setReviewStep(project.slug, "coletando diff e contexto do git…");
     const git = await collectGitContext(project);
@@ -120,7 +120,9 @@ export async function runCodeReviewForProject(project: ProjectRow, force = false
         [project.slug, git.commitSha]
       );
       if (existing.rows.length) {
-        return { ok: false, error: `commit ${git.commitSha} já revisado (report #${existing.rows[0].id})` };
+        // Commit sem mudança desde o último review não é falha — é o estado estável esperado
+        // (ex.: PR aberto sem commit novo). Devolve o report existente em vez de erro vermelho na UI.
+        return { ok: true, reportId: existing.rows[0].id, alreadyReviewed: true };
       }
     }
 

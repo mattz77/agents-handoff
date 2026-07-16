@@ -70,15 +70,17 @@ const GITHUB_TIMEOUT_MS = 30_000;
 const GITHUB_MAX_RETRIES = 3;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function githubFetch(url: string, accept: string): Promise<Response> {
+async function githubFetch(url: string, accept: string, init?: RequestInit): Promise<Response> {
   const token = await getGithubToken();
   let lastErr: Error | undefined;
   for (let attempt = 0; attempt <= GITHUB_MAX_RETRIES; attempt++) {
     try {
       const res = await fetch(url, {
+        ...init,
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: accept,
+          ...(init?.body ? { "Content-Type": "application/json" } : {}),
         },
         signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
       });
@@ -95,10 +97,15 @@ async function githubFetch(url: string, accept: string): Promise<Response> {
   throw lastErr;
 }
 
-async function githubApi(path: string): Promise<any> {
-  const res = await githubFetch(`https://api.github.com${path}`, "application/vnd.github+json");
-  if (!res.ok) throw new Error(`GitHub API HTTP ${res.status} em ${path}`);
-  return res.json();
+async function githubApi(path: string, init?: RequestInit): Promise<any> {
+  const res = await githubFetch(`https://api.github.com${path}`, "application/vnd.github+json", init);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const err = new Error(`GitHub API HTTP ${res.status} em ${path}: ${text.slice(0, 300)}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return res.status === 204 ? null : res.json();
 }
 
 async function githubDiff(path: string): Promise<string> {
@@ -145,20 +152,104 @@ async function collectGithub(project: ProjectRow): Promise<GitCollectResult> {
     };
   }
 
-  // Sem PR aberto: revisa o último commit da branch default (compare base...base seria sempre vazio).
-  const commits = await githubApi(`/repos/${owner}/${repo}/commits?sha=${base}&per_page=10`);
-  const headCommit = Array.isArray(commits) && commits.length ? commits[0] : null;
-  if (!headCommit) throw new Error(`Repo ${owner}/${repo} sem commits na branch ${base}`);
+  // Sem PR aberto: revisa tudo que foi commitado direto na branch default desde o último PR
+  // mergeado (não só o último commit isolado) e abre um PR de auditoria pra hospedar os
+  // comentários inline — sem isso, uma vez sem PR aberto o review nunca mais tem onde postar.
+  return collectSinceLastMerge(owner, repo, base);
+}
 
-  const detail = await githubApi(`/repos/${owner}/${repo}/commits/${headCommit.sha}`);
-  const diff = await githubDiff(`/repos/${owner}/${repo}/commits/${headCommit.sha}`);
+/** Branch congelada no ponto do último merge, criada só se ainda não existir — idempotente,
+ *  evita empilhar branch nova a cada rodada de review. */
+async function ensureFrozenBaseBranch(owner: string, repo: string, name: string, sha: string): Promise<void> {
+  const existing = await githubApi(`/repos/${owner}/${repo}/git/ref/heads/${name}`).catch((e) => {
+    if ((e as Error & { status?: number }).status === 404) return null;
+    throw e;
+  });
+  if (existing) return;
+  await githubApi(`/repos/${owner}/${repo}/git/refs`, {
+    method: "POST",
+    body: JSON.stringify({ ref: `refs/heads/${name}`, sha }),
+  });
+}
+
+/** Acha (ou abre) o PR de auditoria entre a branch congelada e a branch default atual. */
+async function ensureAuditPr(
+  owner: string, repo: string, base: string, frozenBranch: string, lastMergedPrNumber: number | null
+): Promise<{ number: number; url: string }> {
+  const openPrs = await githubApi(`/repos/${owner}/${repo}/pulls?state=open&base=${frozenBranch}&head=${owner}:${base}&per_page=1`);
+  if (Array.isArray(openPrs) && openPrs.length) {
+    return { number: openPrs[0].number, url: openPrs[0].html_url };
+  }
+  const title = lastMergedPrNumber
+    ? `🤖 Code Review — commits diretos em ${base} desde o PR #${lastMergedPrNumber}`
+    : `🤖 Code Review — auditoria de ${base}`;
+  const body = [
+    `PR gerado automaticamente pelo Daemon-CodeReview para revisar commits que foram direto pra \`${base}\` sem passar por um PR aberto.`,
+    ``,
+    `**Não é um PR de código pra mergear normalmente** — a branch base (\`${frozenBranch}\`) é um marcador congelado, não recebe trabalho de ninguém. Serve só pra hospedar os comentários inline do review. Pode fechar depois de ler/endereçar os comentários.`,
+  ].join("\n");
+  try {
+    const pr = await githubApi(`/repos/${owner}/${repo}/pulls`, {
+      method: "POST",
+      body: JSON.stringify({ title, head: base, base: frozenBranch, body }),
+    });
+    return { number: pr.number, url: pr.html_url };
+  } catch (e) {
+    // Corrida: outro processo abriu no intervalo entre o check e o POST — reusa o existente.
+    if ((e as Error & { status?: number }).status === 422) {
+      const retry = await githubApi(`/repos/${owner}/${repo}/pulls?state=open&base=${frozenBranch}&head=${owner}:${base}&per_page=1`);
+      if (Array.isArray(retry) && retry.length) return { number: retry[0].number, url: retry[0].html_url };
+    }
+    throw e;
+  }
+}
+
+async function collectSinceLastMerge(owner: string, repo: string, base: string): Promise<GitCollectResult> {
+  const closedPrs = await githubApi(`/repos/${owner}/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=20`);
+  const lastMerged = (Array.isArray(closedPrs) ? closedPrs : []).find((p: any) => p.merged_at && p.merge_commit_sha);
+
+  const currentRef = await githubApi(`/repos/${owner}/${repo}/git/ref/heads/${base}`);
+  const currentTip: string = currentRef.object.sha;
+
+  // Repo sem nenhum PR mergeado ainda: sem ponto de referência, cai pro último commit isolado.
+  if (!lastMerged) {
+    const commits = await githubApi(`/repos/${owner}/${repo}/commits?sha=${base}&per_page=10`);
+    const headCommit = Array.isArray(commits) && commits.length ? commits[0] : null;
+    if (!headCommit) throw new Error(`Repo ${owner}/${repo} sem commits na branch ${base}`);
+    const detail = await githubApi(`/repos/${owner}/${repo}/commits/${headCommit.sha}`);
+    const diff = await githubDiff(`/repos/${owner}/${repo}/commits/${headCommit.sha}`);
+    return {
+      commitSha: headCommit.sha,
+      branch: base,
+      diff: truncateDiff(diff),
+      commits: commits.map((c: any) => `${c.sha.slice(0, 7)} ${c.commit?.message?.split("\n")[0] ?? ""}`),
+      changedFiles: (detail?.files || []).map((f: any) => f.filename).filter((f: string) => !isSensitivePath(f)),
+      fileTree: await githubFileTree(owner, repo, headCommit.sha),
+    };
+  }
+
+  const mergeBase: string = lastMerged.merge_commit_sha;
+  if (mergeBase === currentTip) {
+    // Nada novo desde o último merge — estado estável, não é erro, não abre PR à toa.
+    return { commitSha: currentTip, branch: base, diff: "", commits: [], changedFiles: [], fileTree: [] };
+  }
+
+  const compare = await githubApi(`/repos/${owner}/${repo}/compare/${mergeBase}...${currentTip}`);
+  const diff = await githubDiff(`/repos/${owner}/${repo}/compare/${mergeBase}...${currentTip}`);
+
+  const frozenBranch = `codereview/base-${lastMerged.number}`;
+  await ensureFrozenBaseBranch(owner, repo, frozenBranch, mergeBase);
+  const auditPr = await ensureAuditPr(owner, repo, base, frozenBranch, lastMerged.number);
+
   return {
-    commitSha: headCommit.sha,
+    commitSha: currentTip,
     branch: base,
     diff: truncateDiff(diff),
-    commits: commits.map((c: any) => `${c.sha.slice(0, 7)} ${c.commit?.message?.split("\n")[0] ?? ""}`),
-    changedFiles: (detail?.files || []).map((f: any) => f.filename).filter((f: string) => !isSensitivePath(f)),
-    fileTree: await githubFileTree(owner, repo, headCommit.sha),
+    commits: (compare?.commits || []).map((c: any) => `${c.sha.slice(0, 7)} ${c.commit?.message?.split("\n")[0] ?? ""}`),
+    openPrNumber: auditPr.number,
+    openPrUrl: auditPr.url,
+    changedFiles: (compare?.files || []).map((f: any) => f.filename).filter((f: string) => !isSensitivePath(f)),
+    fileTree: await githubFileTree(owner, repo, currentTip),
   };
 }
 
