@@ -755,6 +755,8 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const [attacks, setAttacks] = React.useState([]);
     const [attacking, setAttacking] = React.useState(false);
     const [merging, setMerging] = React.useState(false);
+    const pollRef = React.useRef(null);
+    const timeoutRef = React.useRef(null);
 
     const load = React.useCallback(() => {
       return fetch('/ops/api/codereview')
@@ -774,7 +776,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         .catch(() => []);
     }, []);
 
-    React.useEffect(() => { load(); loadAttacks(); }, [load, loadAttacks]);
+    React.useEffect(() => { load(); loadAttacks(); return () => { if (pollRef.current) clearInterval(pollRef.current); if (timeoutRef.current) clearTimeout(timeoutRef.current); }; }, [load, loadAttacks]);
     React.useEffect(() => {
       fetch('/ops/api/codereview/models').then(r => r.json())
         .then(d => {
@@ -827,17 +829,18 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         .finally(() => { setRunning(false); setReviewStep(''); });
 
       if (targetSlug) {
-        const poll = setInterval(() => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        pollRef.current = setInterval(() => {
           fetch(`/ops/api/codereview/run-status?slug=${encodeURIComponent(targetSlug)}`)
             .then(r => r.json())
             .then(p => {
               if (p && p.status === 'running') setReviewStep(p.step || '');
-              if (p && p.status !== 'running') clearInterval(poll);
+              if (p && p.status !== 'running') { clearInterval(pollRef.current); pollRef.current = null; }
             })
             .catch(() => {});
         }, 1500);
-        const timeout = setTimeout(() => clearInterval(poll), 5 * 60 * 1000);
-        return () => { clearInterval(poll); clearTimeout(timeout); };
+        timeoutRef.current = setTimeout(() => { clearInterval(pollRef.current); pollRef.current = null; }, 5 * 60 * 1000);
       }
     };
 

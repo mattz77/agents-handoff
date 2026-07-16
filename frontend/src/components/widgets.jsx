@@ -48,7 +48,7 @@ import { Icon, HDLib } from './icons.jsx';
   // ---- Tabela genérica ----
   // pageSize: renderiza só as N primeiras linhas + botão "Mostrar mais" (evita listas de centenas de linhas)
   function DataTable({ cols, rows, empty = 'Nenhum registro.', pageSize }) {
-    const [limit, setLimit] = React.useState(pageSize || Infinity);
+    const [limit, setLimit] = React.useState((pageSize && pageSize > 0) ? pageSize : Infinity);
     if (!rows.length) return React.createElement('div', { className: 'empty' }, empty);
     const visible = rows.length > limit ? rows.slice(0, limit) : rows;
     const hidden = rows.length - visible.length;
