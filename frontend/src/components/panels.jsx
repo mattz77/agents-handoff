@@ -836,7 +836,8 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             })
             .catch(() => {});
         }, 1500);
-        setTimeout(() => clearInterval(poll), 5 * 60 * 1000);
+        const timeout = setTimeout(() => clearInterval(poll), 5 * 60 * 1000);
+        return () => { clearInterval(poll); clearTimeout(timeout); };
       }
     };
 
