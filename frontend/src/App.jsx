@@ -7,7 +7,7 @@ import { useTweaks, TweaksPanel, TweakSection, TweakRadio, TweakToggle, TweakCol
 const DS = window.CommitBriefingDesignSystem_27542e;
 const { Button, Avatar } = DS;
 const { cls } = HDLib;
-const { OverviewPanel, HandoffsPanel, BrainPanel, InfraPanel, DataLakePanel, CodeReviewPanel, ProjectsPanel } = HDP;
+const { OverviewPanel, HandoffsPanel, BrainPanel, InfraPanel, DataLakePanel, CodeReviewPanel, ProjectsPanel, AgentTasksPanel } = HDP;
 const { Inspector } = HDW;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -24,6 +24,7 @@ const NAV = [
   { id: 'brain', label: 'LLM Brain', icon: 'brain' },
   { id: 'datalake', label: 'DataLake', icon: 'cloud' },
   { id: 'codereview', label: 'Code Review', icon: 'shield' },
+  { id: 'agents', label: 'Agentes', icon: 'brain' },
   { id: 'projects', label: 'Projetos', icon: 'folder' },
   { id: 'infra', label: 'Infra', icon: 'server' },
 ];
@@ -67,13 +68,14 @@ function Sidebar({ tab, setTab, open, onClose }) {
 }
 
 function Header({ tab, onRefresh, updated, interval, setInterval_, onSearchToggle }) {
-  const titles = { overview: 'Visão geral', handoffs: 'Handoffs & filas', brain: 'LLM Brain', datalake: 'DataLake', codereview: 'Code Review', projects: 'Projetos', infra: 'Infraestrutura' };
+  const titles = { overview: 'Visão geral', handoffs: 'Handoffs & filas', brain: 'LLM Brain', datalake: 'DataLake', codereview: 'Code Review', agents: 'Agentes', projects: 'Projetos', infra: 'Infraestrutura' };
   const subs = {
     overview: 'Orquestração de handoff entre agentes (em tempo real)',
     handoffs: 'Auditoria, dead-letter queue, outbox e circuit breakers',
     brain: 'Modelo ativo, decisões e fila de tarefas',
     datalake: 'Google Drive 5\u00a0TB (memória de longo prazo)',
     codereview: 'Revisão diária, riscos mitigados e integridade',
+    agents: 'Delegue tasks a agentes — kanban, branch isolada e PR pra revisão',
     projects: 'Gerenciamento de repositórios e projetos ativos',
     infra: 'Containers, Redis HA e saúde do sistema',
   };
@@ -207,7 +209,13 @@ function App() {
     }, 100);
     return () => clearInterval(id);
   }, [hdReady]);
-  const [tab, setTab] = React.useState('overview');
+  // Tab ativa persiste em localStorage — F5 deve reabrir onde o usuário estava, não sempre
+  // na Visão geral. Valida contra NAV pra não travar numa tab removida/renomeada.
+  const [tab, setTabRaw] = React.useState(() => {
+    const saved = localStorage.getItem('hd.tab');
+    return saved && NAV.some((n) => n.id === saved) ? saved : 'overview';
+  });
+  const setTab = React.useCallback((id) => { localStorage.setItem('hd.tab', id); setTabRaw(id); }, []);
   const [filter, setFilter] = React.useState(null);
   const [inspect, setInspect] = React.useState(null);
   const [dlq, setDlq] = React.useState(() => window.HD?.dlq?.slice() || []);
@@ -300,8 +308,9 @@ function App() {
       : tab === 'brain' ? React.createElement(BrainPanel, null)
         : tab === 'datalake' ? React.createElement(DataLakePanel, null)
           : tab === 'codereview' ? React.createElement(CodeReviewPanel, null)
-            : tab === 'projects' ? React.createElement(ProjectsPanel, null)
-              : React.createElement(InfraPanel, null);
+            : tab === 'agents' ? React.createElement(AgentTasksPanel, null)
+              : tab === 'projects' ? React.createElement(ProjectsPanel, null)
+                : React.createElement(InfraPanel, null);
 
   if (!hdReady) {
     return React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'monospace', color: 'var(--muted-foreground)' } }, 'Inicializando Handoff Daemon...');
