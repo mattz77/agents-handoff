@@ -773,7 +773,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       let alive = true;
       setPrs(null);
       fetch('/ops/api/codereview/prs?slug=' + encodeURIComponent(shownSlug))
-        .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(d => { if (alive) setPrs(d); })
         .catch(err => { console.error('Failed to fetch PRs', err); if (alive) setPrs(null); });
       return () => { alive = false; };
