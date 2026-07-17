@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: handoff-daemon
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 1g
     cpus: 1.5
     environment:
       - NODE_ENV=production
@@ -41,6 +41,9 @@ services:
       - LINTER_MAX_TOKENS=${LINTER_MAX_TOKENS:-8192}
       - CODEREVIEW_MAX_DIFF_CHARS=${CODEREVIEW_MAX_DIFF_CHARS:-80000}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      # Daemon-TaskAgent (Kanban de tasks delegadas) — motor "claude-cli" precisa da key.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TASK_CLAUDE_TIMEOUT_MS=${TASK_CLAUDE_TIMEOUT_MS:-600000}
       # Agent API (Telegram via n8n / AnythingLLM agent skill) — rotas /agent/*
       - AGENT_API_TOKEN=${AGENT_API_TOKEN:-}
       # Webhook do GitHub (workflow_run -> Daemon-CIFixAgent)
