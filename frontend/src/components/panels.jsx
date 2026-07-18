@@ -142,16 +142,34 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     );
   }
 
+  // Agrupa alertas idênticos (mesma msg + level) num só card com contador ×N —
+  // o mesmo warn recorrente (ex: brain-compact) não vira uma lista de 30 linhas iguais.
   function AlertsList({ alerts }) {
+    const [expanded, setExpanded] = React.useState(false);
     const tone = { CRITICAL: 'critical', WARNING: 'warning', INFO: 'info' };
     const iconFor = { CRITICAL: 'xCircle', WARNING: 'alert', INFO: 'circleDot' };
+    const groups = [];
+    const byKey = new Map();
+    for (const a of alerts || []) {
+      const key = a.level + '|' + a.msg;
+      const g = byKey.get(key);
+      if (g) { g.count++; if (a.at > g.last) g.last = a.at; if (a.at < g.first) g.first = a.at; }
+      else { const ng = { ...a, count: 1, last: a.at, first: a.at }; byKey.set(key, ng); groups.push(ng); }
+    }
+    groups.sort((x, y) => (y.last || '').localeCompare(x.last || ''));
+    const ALERTS_CAP = 6;
+    const visible = expanded ? groups : groups.slice(0, ALERTS_CAP);
     return React.createElement('div', { className: 'alerts' },
-      (alerts || []).map((a, i) => React.createElement('div', { key: i, className: 'alert' },
+      visible.map((a, i) => React.createElement('div', { key: i, className: 'alert' },
         React.createElement('span', { className: cls('alert__icon', 'tone-' + tone[a.level]) }, React.createElement(Icon, { name: iconFor[a.level], size: 14 })),
         React.createElement('div', { className: 'alert__body' },
-          React.createElement('div', { className: 'alert__msg' }, a.msg),
-          React.createElement('div', { className: 'alert__meta mono' }, a.level + ' · ' + fmtAgo(a.at))),
+          React.createElement('div', { className: 'alert__msg' }, a.msg,
+            a.count > 1 && React.createElement('span', { className: 'alert__count mono' }, '×' + a.count)),
+          React.createElement('div', { className: 'alert__meta mono' },
+            a.level + ' · ' + (a.count > 1 ? 'último ' + fmtAgo(a.last) + ' · desde ' + fmtAgo(a.first) : fmtAgo(a.last)))),
       )),
+      groups.length > ALERTS_CAP && React.createElement('button', { className: 'tbl-more', onClick: () => setExpanded((v) => !v) },
+        expanded ? 'Mostrar menos' : 'Mostrar mais ' + (groups.length - ALERTS_CAP) + ' alertas'),
     );
   }
 
@@ -208,13 +226,13 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             actions: React.createElement('div', { className: 'chip-row' },
               filter && React.createElement('button', { className: 'fchip fchip--on', onClick: () => setFilter(null) }, statusMeta(filter).label, React.createElement(Icon, { name: 'x', size: 11 })),
               !filter && statuses.slice(0, 4).map((s) => React.createElement('button', { key: s, className: 'fchip', onClick: () => setFilter(s) }, statusMeta(s).label))),
-          }, React.createElement(DataTable, { cols: hCols, rows })),
+          }, React.createElement(DataTable, { cols: hCols, rows, pageSize: 25 })),
           React.createElement(Section, { icon: 'split', title: 'Dead Letter Queue', count: dlq.length, accent: 'var(--critical)',
             actions: React.createElement('span', { className: 'sub-note' }, 'clique na linha pra ver a falha · replay reinjeta no stream') },
             React.createElement(DataTable, { cols: dlqCols, rows: dlqRows, empty: 'DLQ vazia - nada a reprocessar.' }),
             dlqSel && React.createElement(DlqDetail, { item: dlqSel, onClose: () => setDlqSel(null), onReplay: (it) => { onReplay(it); setDlqSel(null); } })),
           React.createElement(Section, { icon: 'inbox', title: 'Outbox represado', count: HD.outbox.filter((o) => o.status !== 'SENT').length, accent: 'var(--toil)' },
-            React.createElement(DataTable, { cols: obCols, rows: HD.outbox })),
+            React.createElement(DataTable, { cols: obCols, rows: HD.outbox, pageSize: 20 })),
         ),
         React.createElement('div', { className: 'col sticky-col' },
           React.createElement(Section, { icon: 'shield', title: 'Circuit breakers', count: (HD.breakers || []).length },
@@ -279,12 +297,13 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
 
   function StreamBlock() {
     const s = window.HD.stream;
-    const pct = Math.min(s.length / s.maxlen * 100, 100);
-    const rows = [['Comprimento', s.length.toLocaleString('pt-BR')], ['Consumer groups', s.groups], ['Pendentes (PEL)', s.pending], ['MAXLEN', '~' + (s.maxlen / 1000) + 'k']];
+    const hasMax = Number.isFinite(s.maxlen) && s.maxlen > 0;
+    const pct = hasMax ? Math.min(s.length / s.maxlen * 100, 100) : 0;
+    const rows = [['Comprimento', s.length.toLocaleString('pt-BR')], ['Consumer groups', s.groups], ['Pendentes (PEL)', s.pending], ['MAXLEN', hasMax ? '~' + (s.maxlen / 1000) + 'k' : 'sem limite']];
     return React.createElement('div', { className: 'stream' },
       React.createElement('div', { className: 'stream__bar' },
         React.createElement('span', { className: 'stream__fill', style: { width: pct + '%' } })),
-      React.createElement('div', { className: 'stream__pct mono' }, pct.toFixed(0) + '% do MAXLEN'),
+      React.createElement('div', { className: 'stream__pct mono' }, hasMax ? pct.toFixed(0) + '% do MAXLEN' : 'stream sem MAXLEN configurado'),
       React.createElement('div', { className: 'kv' },
         (rows || []).map(([k, v], i) => React.createElement('div', { key: i, className: 'kv__row' },
           React.createElement('span', { className: 'kv__k' }, k),
@@ -722,14 +741,43 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const [taskState, setTaskState] = React.useState({}); // issue key -> 'creating'|'done'|'error'
     const [models, setModels] = React.useState([]);
     const [recommended, setRecommended] = React.useState({ review: [], fix: [], verify: [], test: [] });
-    const [modelSel, setModelSel] = React.useState(''); // '' = usa o default do projeto/env — modelo do review
-    const [attackModelSel, setAttackModelSel] = React.useState(''); // modelo do Daemon-FixAgent
-    const [verifyModelSel, setVerifyModelSel] = React.useState(''); // modelo do Daemon-Verifier
+    // Seleção de modelo por função persiste em localStorage — usuário não deveria ter
+    // que reescolher toda vez que a página recarrega ou o attack termina.
+    const [modelSel, setModelSelRaw] = React.useState(() => localStorage.getItem('cr.model.review') || '');
+    const [attackModelSel, setAttackModelSelRaw] = React.useState(() => localStorage.getItem('cr.model.fix') || '');
+    const [verifyModelSel, setVerifyModelSelRaw] = React.useState(() => localStorage.getItem('cr.model.verify') || '');
+    const setModelSel = React.useCallback((v) => { localStorage.setItem('cr.model.review', v); setModelSelRaw(v); }, []);
+    const setAttackModelSel = React.useCallback((v) => { localStorage.setItem('cr.model.fix', v); setAttackModelSelRaw(v); }, []);
+    const setVerifyModelSel = React.useCallback((v) => { localStorage.setItem('cr.model.verify', v); setVerifyModelSelRaw(v); }, []);
     const [showModelPickers, setShowModelPickers] = React.useState(false);
     const [runError, setRunError] = React.useState('');
+    const [reviewStep, setReviewStep] = React.useState('');
     const [attacks, setAttacks] = React.useState([]);
     const [attacking, setAttacking] = React.useState(false);
     const [merging, setMerging] = React.useState(false);
+    const [prs, setPrs] = React.useState(null);
+    const pollRef = React.useRef(null);
+    const timeoutRef = React.useRef(null);
+
+    // Slug do projeto exibido — filtro ativo, ou projeto do report selecionado quando em "Todos".
+    const shownSlug = React.useMemo(() => {
+      if (projectFilter) return projectFilter;
+      const all = (crData && crData.reports) || [];
+      const l = all[Math.min(selected, Math.max(all.length - 1, 0))] || all[0];
+      return (l && l.project_slug) || '';
+    }, [crData, projectFilter, selected]);
+
+    // PRs abertos + últimos mergeados do projeto exibido.
+    React.useEffect(() => {
+      if (!shownSlug) { setPrs(null); return; }
+      let alive = true;
+      setPrs(null);
+      fetch('/ops/api/codereview/prs?slug=' + encodeURIComponent(shownSlug))
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(d => { if (alive) setPrs(d); })
+        .catch(err => { console.error('Failed to fetch PRs', err); if (alive) setPrs(null); });
+      return () => { alive = false; };
+    }, [shownSlug]);
 
     const load = React.useCallback(() => {
       return fetch('/ops/api/codereview')
@@ -749,7 +797,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         .catch(() => []);
     }, []);
 
-    React.useEffect(() => { load(); loadAttacks(); }, [load, loadAttacks]);
+    React.useEffect(() => { load(); loadAttacks(); return () => { if (pollRef.current) clearInterval(pollRef.current); if (timeoutRef.current) clearTimeout(timeoutRef.current); }; }, [load, loadAttacks]);
     React.useEffect(() => {
       fetch('/ops/api/codereview/models').then(r => r.json())
         .then(d => {
@@ -792,12 +840,33 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     const runNow = () => {
       setRunning(true);
       setRunError('');
+      setReviewStep('iniciando…');
+      const targetSlug = projectFilter || null;
       const body = JSON.stringify({ ...(projectFilter ? { slug: projectFilter } : {}), ...(modelSel ? { model: modelSel } : {}) });
       fetch('/ops/api/codereview/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
         .then(res => res.json())
-        .then((r) => { if (r && r.ok === false) setRunError(r.error || 'falha desconhecida'); return load(); })
+        .then((r) => {
+          if (r && r.ok === false) setRunError(r.error || 'falha desconhecida');
+          else if (r && r.alreadyReviewed) setRunError('');
+          return load();
+        })
         .catch(err => { console.error('Failed to trigger code review', err); setRunError(String(err)); })
-        .finally(() => setRunning(false));
+        .finally(() => { setRunning(false); setReviewStep(''); });
+
+      if (targetSlug) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        pollRef.current = setInterval(() => {
+          fetch(`/ops/api/codereview/run-status?slug=${encodeURIComponent(targetSlug)}`)
+            .then(r => r.json())
+            .then(p => {
+              if (p && p.status === 'running') setReviewStep(p.step || '');
+              if (p && p.status !== 'running') { clearInterval(pollRef.current); pollRef.current = null; }
+            })
+            .catch(() => {});
+        }, 1500);
+        timeoutRef.current = setTimeout(() => { clearInterval(pollRef.current); pollRef.current = null; }, 5 * 60 * 1000);
+      }
     };
 
     const attackNow = (report) => {
@@ -845,19 +914,58 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     }
 
     const allReports = (crData && crData.reports) || [];
-    const projectOptions = [...new Set(allReports.map(r => r.project_slug))];
+    const crProjects = (crData && crData.projects) || [];
+    const projectOptions = crProjects.length
+      ? crProjects.map(p => p.slug)
+      : [...new Set(allReports.map(r => r.project_slug))];
     const reports = projectFilter ? allReports.filter(r => r.project_slug === projectFilter) : allReports;
 
-    if (allReports.length === 0) {
-      return React.createElement('div', { className: 'panel animate-fade-up' },
+    const renderModelPicker = () => showModelPickers && models.length > 0 && React.createElement('div', { className: 'cr-model-row' },
+      [['review', modelSel, setModelSel, '◆', 'Review'], ['fix', attackModelSel, setAttackModelSel, '▲', 'Fix'], ['verify', verifyModelSel, setVerifyModelSel, '●', 'Verify']].map(function (field) {
+        const role = field[0], val = field[1], setter = field[2], glyph = field[3], label = field[4];
+        const recForRole = (recommended[role] || []).filter(function (m) { return models.includes(m); });
+        const options = [React.createElement('option', { key: 'def', value: '' }, 'padrão')];
+        if (recForRole.length > 0) {
+          options.push(React.createElement('optgroup', { key: 'rec', label: 'Indicados' },
+            recForRole.map(function (m) { return React.createElement('option', { key: 'rec-' + m, value: m }, m); })));
+        }
+        options.push(React.createElement('optgroup', { key: 'all', label: 'Todos' },
+          models.map(function (m) { return React.createElement('option', { key: 'all-' + m, value: m }, m); })));
+        return React.createElement('label', { key: role, className: 'cr-model-field' },
+          React.createElement('span', { className: cls('cr-model-field__lbl', 'cr-model-field__lbl--' + role) }, glyph + ' ' + label),
+          React.createElement('select', { className: 'cr-model-select', value: val, onChange: function (e) { setter(e.target.value); } }, options));
+      }));
+
+    if (reports.length === 0) {
+      return React.createElement('div', { className: 'panel animate-fade-up stagger' },
+        React.createElement('div', { className: 'cr-toolbar' },
+          React.createElement('div', { className: 'chip-row' },
+            React.createElement('button', { className: cls('fchip', !projectFilter && 'fchip--on'), onClick: () => { setProjectFilter(''); setSelected(0); } }, 'Todos'),
+            projectOptions.map(p => React.createElement('button', {
+              key: p, className: cls('fchip', projectFilter === p && 'fchip--on'),
+              onClick: () => { setProjectFilter(p); setSelected(0); },
+            }, p))),
+          React.createElement('div', { className: 'cr-toolbar__run' },
+            React.createElement('button', {
+              className: cls('cb-btn cb-btn--ghost', showModelPickers && 'cb-btn--ghost-on'), onClick: () => setShowModelPickers(v => !v),
+              title: 'Escolher modelo por função (review / fix / verify)',
+            }, React.createElement(Icon, { name: 'settings', size: 13 }), ' Modelos'))),
+        renderModelPicker(),
         React.createElement(Section, { icon: 'shield', title: 'Code Review — Minimax M3' },
           React.createElement('div', { style: { padding: '40px 0', textAlign: 'center' } },
-            React.createElement('div', { className: 'muted', style: { marginBottom: 16 } }, 'Nenhum relatório de code review encontrado.'),
-            React.createElement('button', { className: 'cb-btn', onClick: runNow, disabled: running }, running ? 'Executando…' : 'Rodar review agora')))
+            React.createElement('div', { className: 'muted', style: { marginBottom: 16 } }, 'Nenhum relatório de code review encontrado' + (projectFilter ? ` para ${projectFilter}` : '') + '.'),
+            running && reviewStep && React.createElement('div', { className: 'muted', style: { marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 } },
+              React.createElement('span', { className: 'cr-attack__dot' }), reviewStep),
+            runError && !running && React.createElement('div', { className: 'cr-attack-result cr-attack-result--warn', style: { marginBottom: 16, textAlign: 'left' } },
+              React.createElement('strong', null, 'Review falhou'), ' — ', runError),
+            React.createElement('button', { className: 'cb-btn', onClick: runNow, disabled: running }, running ? 'Executando…' : projectFilter ? `Rodar review — ${projectFilter}` : 'Rodar review agora')))
       );
     }
 
     const latest = reports[Math.min(selected, Math.max(reports.length - 1, 0))] || reports[0];
+    // Ataques só do projeto exibido — banner "Ciclo aprovado" de handoff-daemon não deve
+    // aparecer quando o usuário está olhando luma (e vice-versa).
+    const projAttacks = attacks.filter(a => a.project_slug === latest.project_slug);
     const issues = Array.isArray(latest.issues) ? latest.issues : [];
     const refactors = Array.isArray(latest.refactors) ? latest.refactors : [];
 
@@ -900,53 +1008,47 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
             className: cls('cb-btn cb-btn--ghost', showModelPickers && 'cb-btn--ghost-on'), onClick: () => setShowModelPickers(v => !v),
             title: 'Escolher modelo por função (review / fix / verify)',
           }, React.createElement(Icon, { name: 'settings', size: 13 }), ' Modelos'))),
-        showModelPickers && models.length > 0 && React.createElement('div', { className: 'cr-model-row' },
-          [['review', modelSel, setModelSel, '◆', 'Review'], ['fix', attackModelSel, setAttackModelSel, '▲', 'Fix'], ['verify', verifyModelSel, setVerifyModelSel, '●', 'Verify']].map(function (field) {
-            const role = field[0], val = field[1], setter = field[2], glyph = field[3], label = field[4];
-            const recForRole = (recommended[role] || []).filter(function (m) { return models.includes(m); });
-            const options = [React.createElement('option', { key: 'def', value: '' }, 'padrão')];
-            if (recForRole.length > 0) {
-              options.push(React.createElement('optgroup', { key: 'rec', label: 'Indicados' },
-                recForRole.map(function (m) { return React.createElement('option', { key: 'rec-' + m, value: m }, m); })));
-            }
-            options.push(React.createElement('optgroup', { key: 'all', label: 'Todos' },
-              models.map(function (m) { return React.createElement('option', { key: 'all-' + m, value: m }, m); })));
-            return React.createElement('label', { key: role, className: 'cr-model-field' },
-              React.createElement('span', { className: cls('cr-model-field__lbl', 'cr-model-field__lbl--' + role) }, glyph + ' ' + label),
-              React.createElement('select', { className: 'cr-model-select', value: val, onChange: function (e) { setter(e.target.value); } }, options));
-          })),
+        renderModelPicker(),
+      running && reviewStep && React.createElement('div', { className: 'muted', style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: -4, marginBottom: 8 } },
+        React.createElement('span', { className: 'cr-attack__dot' }), reviewStep),
       runError && React.createElement('div', { className: 'alert cr-run-error' },
         React.createElement(Icon, { name: 'alert', size: 14 }), ' ', runError),
-      attacks.length > 0 && (attacks[0].status === 'running' || attacking) && React.createElement(Card, { className: 'cr-attack' },
+      projAttacks.length > 0 && (projAttacks[0].status === 'running' || attacking) && React.createElement(Card, { className: 'cr-attack' },
         React.createElement('div', { className: 'cr-attack__head' },
           React.createElement('span', { className: 'cr-attack__title' },
             React.createElement(Icon, { name: 'zap', size: 14 }),
-            ' Rodada ', attacks[0].round || 1, ' — ', attacks[0].project_slug,
-            attacks[0].pr_number && React.createElement('span', { className: 'muted' }, ' · PR #' + attacks[0].pr_number)),
-          React.createElement('span', { className: 'mono' }, (attacks[0].issues_fixed || 0) + '/' + (attacks[0].issues_total || 0) + ' corrigidas')),
+            ' Rodada ', projAttacks[0].round || 1, ' — ', projAttacks[0].project_slug,
+            projAttacks[0].pr_number && React.createElement('span', { className: 'muted' }, ' · PR #' + projAttacks[0].pr_number)),
+          React.createElement('span', { className: 'mono' }, (projAttacks[0].issues_fixed || 0) + '/' + (projAttacks[0].issues_total || 0) + ' corrigidas')),
         React.createElement('div', { className: 'cr-attack__step mono' },
-          React.createElement('span', { className: 'cr-attack__dot' }), ' ', attacks[0].current_step || 'iniciando…'),
+          React.createElement('span', { className: 'cr-attack__dot' }), ' ', projAttacks[0].current_step || 'iniciando…'),
         React.createElement('div', { className: 'cr-attack__bar' },
-          React.createElement('span', { style: { width: Math.round(100 * (attacks[0].issues_fixed || 0) / Math.max(attacks[0].issues_total || 1, 1)) + '%' } })),
-        Array.isArray(attacks[0].log) && attacks[0].log.slice(-3).map((l, i) =>
+          React.createElement('span', { style: { width: Math.round(100 * (projAttacks[0].issues_fixed || 0) / Math.max(projAttacks[0].issues_total || 1, 1)) + '%' } })),
+        Array.isArray(projAttacks[0].log) && projAttacks[0].log.slice(-3).map((l, i) =>
           React.createElement('div', { key: i, className: 'cr-attack__log mono' },
             `[${l.status}] ${l.file}${l.line != null ? ':' + l.line : ''} — ${l.detail}`))),
-      attacks.length > 0 && attacks[0].status !== 'running' && !attacking && (() => {
-        const a = attacks[0];
+      projAttacks.length > 0 && projAttacks[0].status !== 'running' && !attacking && (() => {
+        const a = projAttacks[0];
         const converged = a.verify_status === 'approved';
         const needsHuman = a.verify_status === 'needs_human';
         const tone = a.status !== 'done' ? 'fail' : converged ? 'ok' : needsHuman ? 'warn' : 'fail';
+        const projLabel = (crProjects.find(p => p.slug === a.project_slug) || {}).display_name || a.project_slug;
+        // current_step carrega o texto definido pelo merge endpoint/fix-agent/verify-agent quando
+        // o PR já foi mergeado (manual ou automaticamente) — usa isso pra travar o botão de vez.
+        const isMerged = /mergead/i.test(a.current_step || '');
         return React.createElement('div', { className: cls('alert cr-attack-result', 'cr-attack-result--' + tone) },
           React.createElement(Icon, { name: converged ? 'check' : needsHuman ? 'alert' : 'alert', size: 14 }),
+          projLabel && React.createElement('span', { className: 'cr-attack-result__proj mono' }, projLabel),
           ' ', converged ? `Ciclo aprovado pelo Daemon-Verifier (rodada ${a.round || 1})` : needsHuman ? `Precisa de revisão humana (rodada ${a.round || 1})` : `Ataque falhou`,
           ' — ', a.issues_fixed, '/', a.issues_total, ' corrigidas',
           a.pr_url && React.createElement('a', { href: a.pr_url, target: '_blank', rel: 'noreferrer', style: { marginLeft: 8 } }, 'ver PR #' + a.pr_number),
           converged && a.pr_number && React.createElement('button', {
-            className: 'cb-btn cb-btn--merge', style: { marginLeft: 10 }, disabled: merging,
+            className: 'cb-btn cb-btn--merge', style: { marginLeft: 10 }, disabled: merging || isMerged,
             onClick: () => mergeReport(a.project_slug, a.pr_number),
-          }, merging ? 'Mergeando…' : 'Aprovar e Mergear'),
+          }, isMerged ? 'Mergeado ✓' : merging ? 'Mergeando…' : 'Aprovar e Mergear'),
           a.verify_notes && React.createElement('div', { className: 'cr-attack-result__notes' }, a.verify_notes),
-          a.error && React.createElement('span', { className: 'muted', style: { marginLeft: 8 } }, a.error));
+          a.error && React.createElement('span', { className: 'muted', style: { marginLeft: 8 } }, a.error),
+          runError && React.createElement('div', { className: 'cr-attack-result__notes', style: { color: 'var(--critical)' } }, runError));
       })(),
 
       React.createElement('div', { className: 'cr-hero' },
@@ -976,6 +1078,24 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
               React.createElement(StatusBadge, { status: 'info' }, 'refactors'),
               React.createElement('span', { className: 'mono cr-sev__n' }, refactors.length))))),
 
+      prs && ((prs.open || []).length > 0 || (prs.merged || []).length > 0) && React.createElement(Card, { className: 'cr-prs' },
+        React.createElement('div', { className: 'cr-prs__head' },
+          React.createElement(Icon, { name: 'split', size: 14 }),
+          React.createElement('span', { className: 'cr-prs__title' }, 'Pull Requests — ' + (latest.display_name || latest.project_slug))),
+        (prs.open || []).length > 0 && React.createElement('div', { className: 'cr-prs__group' },
+          React.createElement('div', { className: 'cr-prs__lbl' }, 'Abertos'),
+          prs.open.map(p => React.createElement('div', { key: 'o' + p.number, className: 'cr-prs__row' },
+            React.createElement(StatusBadge, { status: p.draft ? 'info' : 'warning' }, p.draft ? 'draft' : 'aberto'),
+            React.createElement('a', { href: p.url, target: '_blank', rel: 'noreferrer', className: 'cr-prs__link' }, '#' + p.number + ' ' + p.title),
+            React.createElement('span', { className: 'mono muted cr-prs__meta' }, p.head + ' → ' + p.base)))),
+        (prs.merged || []).length > 0 && React.createElement('div', { className: 'cr-prs__group' },
+          React.createElement('div', { className: 'cr-prs__lbl' }, 'Últimos mergeados'),
+          prs.merged.map(p => React.createElement('div', { key: 'm' + p.number, className: 'cr-prs__row' },
+            React.createElement(StatusBadge, { status: 'good' }, 'mergeado'),
+            React.createElement('a', { href: p.url, target: '_blank', rel: 'noreferrer', className: 'cr-prs__link' }, '#' + p.number + ' ' + p.title),
+            React.createElement('span', { className: 'mono muted cr-prs__meta' },
+              new Date(p.mergedAt).toLocaleDateString('pt-BR')))))),
+
       React.createElement('div', { className: 'grid-side' },
         React.createElement('div', { className: 'col' },
           React.createElement(Section, { icon: 'alert', title: 'Issues críticas', count: critical.length, accent: 'var(--critical)' },
@@ -1002,7 +1122,7 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
         ),
         React.createElement('div', { className: 'col sticky-col' },
           React.createElement(Section, { icon: 'fileText', title: 'Resumo da revisão' },
-            React.createElement('div', { style: { padding: 16, fontSize: '0.85rem', lineHeight: 1.5, color: 'var(--foreground)' } },
+            React.createElement('div', { style: { padding: 16, fontSize: 'var(--text-base)', lineHeight: 1.65, color: 'var(--foreground)' } },
               latest.summary || 'Sem resumo disponível.',
               latest.pr_url && React.createElement('div', { style: { marginTop: 10 } },
                 React.createElement('a', { href: latest.pr_url, target: '_blank', rel: 'noreferrer', className: 'mono', style: { color: 'var(--primary)' } }, 'Ver PR no GitHub'))
@@ -1013,18 +1133,35 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
               reports.map((r, i) => {
                 const sc = r.score != null ? Number(r.score) : null;
                 const t = sc == null ? 'neutral' : sc < 5 ? 'critical' : sc < 8 ? 'warning' : 'good';
-                return React.createElement('button', {
+                const prNum = r.pr_number || (r.pr_url ? (String(r.pr_url).match(/\/pull\/(\d+)/) || [])[1] : null);
+                const rowIssues = Array.isArray(r.issues) ? r.issues : [];
+                const attackBusy = attacks.some(a => a.status === 'running' && a.project_slug === r.project_slug);
+                return React.createElement('div', {
                   key: r.id || i,
                   className: cls('cr-hist__row', i === selected && 'cr-hist__row--on'),
-                  onClick: () => setSelected(i),
                 },
-                  React.createElement('span', { className: cls('cr-hist__score mono', 'tone-' + t) }, sc == null ? '—' : sc.toFixed(1)),
-                  React.createElement('span', { className: 'cr-hist__meta' },
-                    React.createElement('span', { className: 'cr-hist__proj' }, r.display_name || r.project_slug),
-                    React.createElement('span', { className: 'cr-hist__sub mono' },
-                      (r.commit_sha || '').slice(0, 7) + ' · ' + (r.created_at ? ago(r.created_at) + ' atrás' : ''))),
-                  React.createElement('span', { className: 'cr-hist__n mono' },
-                    (Array.isArray(r.issues) ? r.issues.length : 0) + ' issues'));
+                  React.createElement('button', {
+                    className: 'cr-hist__rowbtn', onClick: () => setSelected(i), title: 'Ver detalhe deste report',
+                  },
+                    React.createElement('span', { className: cls('cr-hist__score mono', 'tone-' + t) }, sc == null ? '—' : sc.toFixed(1)),
+                    React.createElement('span', { className: 'cr-hist__meta' },
+                      React.createElement('span', { className: 'cr-hist__proj' },
+                        r.display_name || r.project_slug,
+                        prNum && React.createElement('span', { className: 'cr-hist__pr mono' }, ' PR #' + prNum)),
+                      React.createElement('span', { className: 'cr-hist__sub mono' },
+                        (r.commit_sha || '').slice(0, 7) + ' · ' + (r.created_at ? ago(r.created_at) + ' atrás' : ''))),
+                    React.createElement('span', { className: 'cr-hist__n mono' }, rowIssues.length + ' issues')),
+                  React.createElement('div', { className: 'cr-hist__actions' },
+                    r.pr_url && React.createElement('a', {
+                      href: r.pr_url, target: '_blank', rel: 'noreferrer', className: 'cb-btn cb-btn--sm cb-btn--ghost', title: 'Ver PR no GitHub',
+                      onClick: (e) => e.stopPropagation(),
+                    }, React.createElement(Icon, { name: 'arrowRight', size: 12 })),
+                    React.createElement('button', {
+                      className: 'cb-btn cb-btn--sm cb-btn--attack',
+                      disabled: attacking || attackBusy || rowIssues.length === 0,
+                      title: 'Atacar este PR específico (sem precisar selecioná-lo antes)',
+                      onClick: (e) => { e.stopPropagation(); setSelected(i); attackNow(r); },
+                    }, attackBusy ? '…' : 'Atacar')));
               })
             )
           )
@@ -1182,4 +1319,212 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     );
   }
 
-  export const HDP = { OverviewPanel, HandoffsPanel, BrainPanel, InfraPanel, DataLakePanel, CodeReviewPanel, ProjectsPanel };
+  function AgentTasksPanel() {
+    // "failed" (task-agent aborta sozinho — task ambígua, sem edits aplicáveis, erro de API) é um
+    // status distinto de "rejected" (humano rejeitou no drawer) no backend, mas ambos caem na
+    // mesma coluna visual — sem isso, tasks failed não apareciam em NENHUMA coluna (só contavam
+    // no total do header), somem do kanban assim que davam erro.
+    const COLUMNS = [
+      { id: 'queued', label: 'Fila', match: ['queued'] },
+      { id: 'running', label: 'Em execução', match: ['running'] },
+      { id: 'awaiting_review', label: 'Aguardando revisão', match: ['awaiting_review'] },
+      { id: 'merged', label: 'Aprovado', match: ['merged'] },
+      { id: 'rejected', label: 'Rejeitado / Falhou', match: ['rejected', 'failed'] },
+    ];
+    const [tasks, setTasks] = React.useState([]);
+    const [loading, setLoading] = React.useState(true);
+    const [projects, setProjects] = React.useState([]);
+    const [formOpen, setFormOpen] = React.useState(false);
+    const [selected, setSelected] = React.useState(null);
+    const [busy, setBusy] = React.useState(false);
+    const [models, setModels] = React.useState([]);
+    const [recommendedFix, setRecommendedFix] = React.useState([]);
+    const emptyForm = { title: '', description: '', project_slug: '', engine: 'nim', model: '' };
+    const [formData, setFormData] = React.useState(emptyForm);
+
+    const fetchTasks = React.useCallback(() => {
+      fetch('/ops/api/agent-tasks')
+        .then(r => r.json())
+        .then(d => { setTasks(d.tasks || []); setLoading(false); })
+        .catch(e => { console.error(e); setLoading(false); });
+    }, []);
+
+    React.useEffect(() => {
+      fetch('/ops/api/projects').then(r => r.json()).then(d => setProjects(d.projects || [])).catch(() => {});
+      // Mesmo catálogo de modelos NIM usado no Code Review — só motor NIM ligado por ora.
+      fetch('/ops/api/codereview/models').then(r => r.json())
+        .then(d => { setModels(Array.isArray(d.models) ? d.models : []); setRecommendedFix((d.recommended && d.recommended.fix) || []); })
+        .catch(() => {});
+      fetchTasks();
+    }, [fetchTasks]);
+
+    React.useEffect(() => {
+      const hasActive = tasks.some(t => t.status === 'queued' || t.status === 'running');
+      if (!hasActive) return;
+      const id = setInterval(fetchTasks, 4000);
+      return () => clearInterval(id);
+    }, [tasks, fetchTasks]);
+
+    // Mantém a task selecionada (drawer aberto) sincronizada com a lista.
+    React.useEffect(() => {
+      if (!selected) return;
+      const fresh = tasks.find(t => t.id === selected.id);
+      if (fresh) setSelected(fresh);
+    }, [tasks]);
+
+    const createTask = (e) => {
+      e.preventDefault();
+      if (!formData.title.trim() || !formData.description.trim() || !formData.project_slug) return;
+      setBusy(true);
+      fetch('/ops/api/agent-tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      }).then(r => r.json()).then(() => {
+        setBusy(false);
+        setFormOpen(false);
+        setFormData(emptyForm);
+        fetchTasks();
+      }).catch(e => { setBusy(false); alert(e); });
+    };
+
+    const approve = (id) => {
+      setBusy(true);
+      fetch(`/ops/api/agent-tasks/${id}/approve`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => { setBusy(false); if (d.error) alert(d.error); fetchTasks(); })
+        .catch(e => { setBusy(false); alert(e); });
+    };
+
+    const reject = (id) => {
+      if (!confirm('Rejeitar esta task e fechar o PR?')) return;
+      setBusy(true);
+      fetch(`/ops/api/agent-tasks/${id}/reject`, { method: 'POST' })
+        .then(() => { setBusy(false); fetchTasks(); })
+        .catch(e => { setBusy(false); alert(e); });
+    };
+
+    const remove = (id) => {
+      if (!confirm('Remover task do kanban? (não fecha PR já aberto)')) return;
+      fetch(`/ops/api/agent-tasks/${id}`, { method: 'DELETE' })
+        .then(() => { setSelected(null); fetchTasks(); });
+    };
+
+    const retry = (id) => {
+      setBusy(true);
+      fetch(`/ops/api/agent-tasks/${id}/retry`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+          setBusy(false);
+          if (d.error) { alert(d.error); return; }
+          setSelected(null);
+          fetchTasks();
+        })
+        .catch(e => { setBusy(false); alert(e); });
+    };
+
+    const engineLabel = (e) => e === 'claude-cli' ? 'Claude Code CLI' : 'NVIDIA NIM';
+    const statusTone = (s) => s === 'merged' ? 'good' : s === 'rejected' || s === 'failed' ? 'critical' : s === 'running' ? 'info' : 'warning';
+
+    const Card_ = (t) => React.createElement('div', {
+      key: t.id, className: 'kanban-card', onClick: () => setSelected(t),
+    },
+      React.createElement('div', { className: 'kanban-card__title' }, t.title),
+      React.createElement('div', { className: 'kanban-card__meta' },
+        React.createElement('span', { className: 'mono' }, t.project_slug),
+        React.createElement(StatusBadge, { status: statusTone(t.status) }, engineLabel(t.engine))),
+      t.model && React.createElement('div', { className: 'kanban-card__model mono' }, t.model),
+      t.error && React.createElement('div', { className: 'kanban-card__error' }, t.error.slice(0, 120)),
+      t.pr_url && React.createElement('a', { className: 'kanban-card__pr', href: t.pr_url, target: '_blank', rel: 'noreferrer', onClick: (e) => e.stopPropagation() }, 'PR #' + t.pr_number),
+      (t.status === 'failed' || t.status === 'rejected') && React.createElement('button', {
+        className: 'kanban-card__retry', onClick: (e) => { e.stopPropagation(); retry(t.id); },
+      }, 'Tentar novamente')
+    );
+
+    return React.createElement('div', { className: 'grid-1' },
+      React.createElement(Section, {
+        icon: 'brain',
+        title: 'Agentes — tasks delegadas',
+        count: tasks.length,
+        actions: React.createElement(Button, { size: 'sm', onClick: () => setFormOpen(true) }, 'Nova Task'),
+      },
+        loading ? React.createElement('div', { className: 'empty' }, 'Carregando...') :
+        React.createElement('div', { className: 'kanban' },
+          COLUMNS.map(col => {
+            const colTasks = tasks.filter(t => col.match.includes(t.status));
+            return React.createElement('div', { key: col.id, className: 'kanban-col' },
+              React.createElement('div', { className: 'kanban-col__head' },
+                React.createElement('span', null, col.label),
+                React.createElement('span', { className: 'kanban-col__count' }, colTasks.length)),
+              React.createElement('div', { className: 'kanban-col__body' },
+                colTasks.map(Card_),
+                !colTasks.length && React.createElement('div', { className: 'kanban-col__empty' }, '—')));
+          })
+        )
+      ),
+
+      formOpen && React.createElement('div', { className: 'drawer-ov open', style: { zIndex: 100 }, onClick: () => setFormOpen(false) }),
+      formOpen && React.createElement('div', { className: 'drawer open', style: { zIndex: 101, padding: '24px', width: '100%', maxWidth: '460px' } },
+        React.createElement('h3', { style: { marginTop: 0 } }, 'Nova Task para Agente'),
+        React.createElement('form', { onSubmit: createTask, style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Título'),
+            React.createElement('input', { className: 'cb-input', required: true, value: formData.title, onChange: e => setFormData({ ...formData, title: e.target.value }) })
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Descrição da task'),
+            React.createElement('textarea', { className: 'cb-input', required: true, rows: 6, placeholder: 'Descreva exatamente o que o agente deve fazer…', value: formData.description, onChange: e => setFormData({ ...formData, description: e.target.value }) })
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Projeto'),
+            React.createElement('select', { className: 'cb-input', required: true, value: formData.project_slug, onChange: e => setFormData({ ...formData, project_slug: e.target.value }) },
+              React.createElement('option', { value: '' }, 'Selecione…'),
+              projects.map(p => React.createElement('option', { key: p.slug, value: p.slug }, p.display_name)))
+          ),
+          React.createElement('div', null,
+            React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Motor'),
+            React.createElement('div', { style: { fontSize: '13px', opacity: 0.7 } }, 'NVIDIA NIM (Claude Code CLI em breve)')
+          ),
+          models.length > 0 && React.createElement('div', null,
+            React.createElement('label', { style: { display: 'block', fontSize: '13px', marginBottom: '4px' } }, 'Modelo'),
+            React.createElement('select', { className: 'cr-model-select', style: { width: '100%' }, value: formData.model, onChange: e => setFormData({ ...formData, model: e.target.value }) },
+              React.createElement('option', { value: '' }, 'padrão'),
+              recommendedFix.filter(m => models.includes(m)).length > 0 && React.createElement('optgroup', { label: 'Indicados' },
+                recommendedFix.filter(m => models.includes(m)).map(m => React.createElement('option', { key: 'rec-' + m, value: m }, m))),
+              React.createElement('optgroup', { label: 'Todos' },
+                models.map(m => React.createElement('option', { key: 'all-' + m, value: m }, m))))
+          ),
+          React.createElement('div', { style: { display: 'flex', gap: '8px', marginTop: '8px' } },
+            React.createElement(Button, { type: 'submit', disabled: busy }, busy ? 'Criando…' : 'Delegar ao agente'),
+            React.createElement(Button, { type: 'button', variant: 'outline', onClick: () => setFormOpen(false) }, 'Cancelar'))
+        )
+      ),
+
+      selected && React.createElement('div', { className: 'drawer-ov open', style: { zIndex: 100 }, onClick: () => setSelected(null) }),
+      selected && React.createElement('div', { className: 'drawer open', style: { zIndex: 101, padding: '24px', width: '100%', maxWidth: '520px', overflowY: 'auto' } },
+        React.createElement('h3', { style: { marginTop: 0 } }, selected.title),
+        React.createElement('div', { style: { display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' } },
+          React.createElement(StatusBadge, { status: statusTone(selected.status) }, selected.status),
+          React.createElement('span', { className: 'mono', style: { fontSize: '12px', opacity: 0.7 } }, selected.project_slug),
+          React.createElement('span', { className: 'mono', style: { fontSize: '12px', opacity: 0.7 } }, engineLabel(selected.engine)),
+          selected.model && React.createElement('span', { className: 'mono', style: { fontSize: '12px', opacity: 0.7 } }, selected.model)),
+        React.createElement('p', { style: { fontSize: '13px', whiteSpace: 'pre-wrap', opacity: 0.85 } }, selected.description),
+        selected.branch && React.createElement('div', { style: { fontSize: '12px', marginBottom: '8px' } }, 'Branch: ', React.createElement('span', { className: 'mono' }, selected.branch)),
+        selected.pr_url && React.createElement('div', { style: { marginBottom: '12px' } },
+          React.createElement('a', { href: selected.pr_url, target: '_blank', rel: 'noreferrer' }, 'Ver PR #' + selected.pr_number, ' →')),
+        selected.error && React.createElement('div', { style: { fontSize: '12px', color: 'var(--critical)', marginBottom: '12px' } }, selected.error),
+        React.createElement('h4', { style: { fontSize: '13px', marginBottom: '6px' } }, 'Log de execução'),
+        React.createElement('div', { className: 'mono', style: { fontSize: '11px', maxHeight: '260px', overflowY: 'auto', background: 'var(--panel-2, rgba(0,0,0,0.2))', borderRadius: '8px', padding: '10px' } },
+          (selected.log || []).map((l, i) => React.createElement('div', { key: i, style: { marginBottom: '6px', opacity: 0.85 } },
+            React.createElement('span', { style: { opacity: 0.5 } }, new Date(l.at).toLocaleTimeString('pt-BR') + ' '), l.message))),
+        React.createElement('div', { style: { display: 'flex', gap: '8px', marginTop: '16px', flexWrap: 'wrap' } },
+          selected.status === 'awaiting_review' && React.createElement(Button, { size: 'sm', disabled: busy, onClick: () => approve(selected.id) }, 'Aprovar e mergear'),
+          selected.status === 'awaiting_review' && React.createElement(Button, { size: 'sm', variant: 'outline', disabled: busy, onClick: () => reject(selected.id) }, 'Rejeitar'),
+          (selected.status === 'failed' || selected.status === 'rejected') && React.createElement(Button, { size: 'sm', disabled: busy, onClick: () => retry(selected.id) }, busy ? 'Recriando…' : 'Tentar novamente'),
+          React.createElement(Button, { size: 'sm', variant: 'outline', onClick: () => remove(selected.id) }, 'Remover'),
+          React.createElement(Button, { size: 'sm', variant: 'outline', onClick: () => setSelected(null) }, 'Fechar'))
+      )
+    );
+  }
+
+  export const HDP = { OverviewPanel, HandoffsPanel, BrainPanel, InfraPanel, DataLakePanel, CodeReviewPanel, ProjectsPanel, AgentTasksPanel };

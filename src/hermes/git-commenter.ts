@@ -7,6 +7,8 @@ export interface CodeReviewIssue {
   category: string;
   message: string;
   suggestion?: string;
+  /** Trecho literal do diff que prova a alegação — issues sem evidence são descartadas. */
+  evidence?: string;
 }
 
 /** Posta um review com inline comments no PR aberto (event COMMENT — não aprova/reprova). */

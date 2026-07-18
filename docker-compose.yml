@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: handoff-daemon
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.5
     environment:
       - NODE_ENV=production
       - REDIS_PASS_FILE=/run/secrets/redis_pass
@@ -41,6 +43,8 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       # Agent API (Telegram via n8n / AnythingLLM agent skill) — rotas /agent/*
       - AGENT_API_TOKEN=${AGENT_API_TOKEN:-}
+      # Webhook do GitHub (workflow_run -> Daemon-CIFixAgent)
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
     extra_hosts:
       # Em Linux (vmaz) mapeia host.docker.internal p/ o gateway; no Docker Desktop já existe.
       - "host.docker.internal:host-gateway"
@@ -51,7 +55,10 @@ services:
       # container. POST /ops/api/brain/tasks escreve via publish-handoff.js (docker exec no host,
       # fora do container) até resolver o compartilhamento do Drive com permissão de escrita.
       - "C:/Users/olive/llm-brain-mirror:/data/llm-brain:rw"
-      - "G:/Meu Drive/Luma_DataLake:/data/datalake:ro"
+      # G:\ é drive virtual do Google Drive Streaming — Docker Desktop/WSL2 não consegue bind
+      # mount de drives de rede virtuais (mesma classe de bug do :rw acima). Monta o mirror local
+      # (./data/datalake, sincronizado por scripts/sync-data.ps1 via Task Scheduler) em vez do G:\ direto.
+      - "./data/datalake:/data/datalake:ro"
       - C:/Users/olive/Documents/Luma-APP:/repo:ro
       - rag-vectorstore:/data/vectorstore
     ports:
@@ -76,6 +83,8 @@ services:
     image: redis:7-alpine
     container_name: handoff-redis-master
     command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); redis-server --appendonly yes --appendfsync everysec --maxmemory 2gb --maxmemory-policy noeviction --requirepass "$$PASS"'
+    mem_limit: 2200m
+    cpus: 1
     secrets:
       - redis_pass
     volumes:
@@ -92,6 +101,8 @@ services:
   redis-replica-1: &replica
     image: redis:7-alpine
     command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); redis-server --appendonly yes --appendfsync everysec --replicaof handoff-redis-master 6379 --masterauth "$$PASS" --requirepass "$$PASS"'
+    mem_limit: 2200m
+    cpus: 1
     secrets:
       - redis_pass
     depends_on:
@@ -106,6 +117,8 @@ services:
   sentinel-1: &sentinel
     image: redis:7-alpine
     command: sh -c 'PASS=$$(cat /run/secrets/redis_pass | xargs); mkdir -p /etc/redis; echo "sentinel resolve-hostnames yes" > /etc/redis/sentinel.conf; echo "sentinel monitor mymaster handoff-redis-master 6379 2" >> /etc/redis/sentinel.conf; echo "sentinel auth-pass mymaster $$PASS" >> /etc/redis/sentinel.conf; redis-sentinel /etc/redis/sentinel.conf'
+    mem_limit: 64m
+    cpus: 0.3
     secrets:
       - redis_pass
     depends_on:
@@ -122,6 +135,8 @@ services:
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy
     container_name: docker-socket-proxy
+    mem_limit: 64m
+    cpus: 0.2
     environment:
       - CONTAINERS=1
       - INFO=1

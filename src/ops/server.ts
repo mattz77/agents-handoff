@@ -23,15 +23,16 @@ import {
   appendBrainTask,
 } from "./metrics";
 import { getCodeReviewData, getCodeReviewReport } from "./codereview-data";
-import { runCodeReviewForSlug, runAttackForSlug, isAttacking } from "./codereview-cron";
+import { runCodeReviewForSlug, runAttackForSlug, runCiFixForSlug, isAttacking } from "./codereview-cron";
+import { getReviewProgress, getAllReviewProgress } from "../hermes/review-progress";
 import { listNimModels } from "../hermes/nim-client";
 import { RECOMMENDED_MODELS } from "../hermes/skills";
 import { replayFromDlq } from "./replay";
 import { transitionStatus } from "../outbox";
 import { verifyAccess, accessConfigured } from "./cf-access";
-import { DataLakeRAGService } from "../infra/datalake-rag";
-
-const ragService = new DataLakeRAGService();
+import { ragService } from "../infra/datalake-rag";
+import { createAgentTask, listAgentTasks, getAgentTask, updateAgentTask, deleteAgentTask } from "./agent-tasks";
+import { executeAgentTask } from "../hermes/task-agent";
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   const s = JSON.stringify(body);
@@ -146,11 +147,16 @@ export async function handleOpsRequest(
     return true;
   }
   // Revalida o JWT do Cloudflare Access (defesa caso alguém atinja o origin direto).
-  const isLocalhost = req.headers.host?.startsWith("localhost:");
-  const access = await verifyAccess(req);
-  if (!isLocalhost && !access.ok) {
-    json(res, 401, { error: `Acesso negado: ${access.error}` });
-    return true;
+  // Localhost (host:3000, docker exec, tests) pula a verificação — sem isso o fetch ao JWKS
+  // do CF pode travar o request inteiro se o DNS do container estiver instável.
+  const isLocalhost = req.headers.host?.startsWith("localhost:") || req.headers.host === "localhost"
+    || req.headers.host?.startsWith("127.0.0.1:");
+  if (!isLocalhost) {
+    const access = await verifyAccess(req);
+    if (!access.ok) {
+      json(res, 401, { error: `Acesso negado: ${access.error}` });
+      return true;
+    }
   }
 
   try {
@@ -264,6 +270,11 @@ export async function handleOpsRequest(
         return json(res, 502, { error: (e as Error).message }), true;
       }
     }
+    if (method === "GET" && path === "/ops/api/codereview/run-status") {
+      const slug = url.searchParams.get("slug");
+      if (slug) return json(res, 200, getReviewProgress(slug) || { status: null }), true;
+      return json(res, 200, getAllReviewProgress()), true;
+    }
     if (method === "GET" && path === "/ops/api/codereview/attacks") {
       const slug = url.searchParams.get("slug");
       const { rows } = await pg.query(
@@ -318,18 +329,55 @@ export async function handleOpsRequest(
       const { git_owner: owner, git_repo: repo } = projRows[0];
       const token = await getGithubToken();
       if (!token) return json(res, 500, { error: "GITHUB_TOKEN não configurado" }), true;
-      const mergeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${body.prNumber}/merge`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
-        body: JSON.stringify({ merge_method: body.mergeMethod || "squash" }),
-      });
-      const mergeData = await mergeRes.json().catch(() => ({}));
-      if (!mergeRes.ok) return json(res, 422, { error: mergeData.message || `GitHub HTTP ${mergeRes.status}` }), true;
+      // Já mergeado (ex.: humano mergeou direto no GitHub) — PUT merge de novo dá 405 do GitHub.
+      // Idempotente: trata como sucesso e só sincroniza o estado local.
+      const prCheck = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${body.prNumber}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      let mergeData: any = {};
+      if (prCheck?.merged) {
+        mergeData = { sha: prCheck.merge_commit_sha, alreadyMerged: true };
+      } else {
+        const mergeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${body.prNumber}/merge`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+          body: JSON.stringify({ merge_method: body.mergeMethod || "squash" }),
+        });
+        mergeData = await mergeRes.json().catch(() => ({}));
+        if (!mergeRes.ok) return json(res, 422, { error: mergeData.message || `GitHub HTTP ${mergeRes.status}` }), true;
+      }
       await pg.query(
         `update codereview_attacks set current_step = 'PR mergeado manualmente' where pr_number = $2 and project_slug = $1`,
         [body.slug, body.prNumber]
       ).catch(() => {});
-      return json(res, 200, { merged: true, sha: mergeData.sha }), true;
+      return json(res, 200, { merged: true, sha: mergeData.sha, alreadyMerged: !!mergeData.alreadyMerged }), true;
+    }
+    if (method === "GET" && path === "/ops/api/codereview/prs") {
+      // PRs abertos + últimos mergeados do projeto — alimenta o card "Pull Requests" do painel.
+      const slug = url.searchParams.get("slug");
+      if (!slug) return json(res, 400, { error: "Param 'slug' é obrigatório" }), true;
+      const { rows: projRows } = await pg.query(`select git_owner, git_repo from handoff_projects where slug = $1`, [slug]);
+      if (!projRows.length || !projRows[0].git_owner || !projRows[0].git_repo) {
+        return json(res, 404, { error: `Projeto "${slug}" não encontrado ou sem git_owner/git_repo` }), true;
+      }
+      const token = await getGithubToken();
+      if (!token) return json(res, 500, { error: "GITHUB_TOKEN não configurado" }), true;
+      const ghList = (q: string) =>
+        fetch(`https://api.github.com/repos/${projRows[0].git_owner}/${projRows[0].git_repo}/pulls?${q}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+        }).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+      const [open, closed] = await Promise.all([
+        ghList("state=open&sort=updated&direction=desc&per_page=10"),
+        ghList("state=closed&sort=updated&direction=desc&per_page=20"),
+      ]);
+      const pick = (p: any) => ({
+        number: p.number, title: p.title, url: p.html_url, head: p.head?.ref, base: p.base?.ref,
+        draft: !!p.draft, mergedAt: p.merged_at, createdAt: p.created_at, author: p.user?.login,
+      });
+      return json(res, 200, {
+        open: (open as any[]).map(pick),
+        merged: (closed as any[]).filter((p) => p.merged_at).slice(0, 5).map(pick),
+      }), true;
     }
     if (method === "GET" && path.match(/^\/ops\/api\/codereview\/[^/]+$/)) {
       const slug = path.substring("/ops/api/codereview/".length);
@@ -338,12 +386,140 @@ export async function handleOpsRequest(
     if (method === "POST" && path === "/ops/api/codereview/run") {
       const body = await readBody(req);
       if (body.slug) {
-        const result = await runCodeReviewForSlug(String(body.slug), body.model ? String(body.model) : undefined);
+        const result = await runCodeReviewForSlug(String(body.slug), body.model ? String(body.model) : undefined, !!body.force);
         return json(res, result.ok ? 200 : 422, result), true;
       }
       const { rows } = await pg.query(`select slug from handoff_projects where codereview_enabled = true`);
       const results = await Promise.allSettled(rows.map((r: any) => runCodeReviewForSlug(r.slug)));
       return json(res, 200, { triggered: rows.map((r: any) => r.slug), results }), true;
+    }
+    if (method === "GET" && path === "/ops/api/agent-tasks") {
+      return json(res, 200, { tasks: await listAgentTasks() }), true;
+    }
+    if (method === "POST" && path === "/ops/api/agent-tasks") {
+      const body = await readBody(req);
+      if (!body.title || !body.description || !body.project_slug) {
+        return json(res, 400, { error: "Campos 'title', 'description' e 'project_slug' são obrigatórios" }), true;
+      }
+      // Motor "claude-cli" existe no backend mas fica desligado no seletor por ora — só NIM em produção.
+      const engine = body.engine === "claude-cli" ? "claude-cli" : "nim";
+      const { rows } = await pg.query(
+        `select slug, display_name, local_path, git_provider, git_owner, git_repo, default_branch, codereview_model
+         from handoff_projects where slug = $1`,
+        [String(body.project_slug)]
+      );
+      if (!rows.length) return json(res, 404, { error: `Projeto "${body.project_slug}" não encontrado` }), true;
+      const task = await createAgentTask({
+        title: String(body.title).slice(0, 200),
+        description: String(body.description).slice(0, 8000),
+        project_slug: String(body.project_slug),
+        engine,
+        model: body.model ? String(body.model) : null,
+      });
+      executeAgentTask(task, rows[0]).catch((e) => console.error(`[TaskAgent] task ${task.id} rejeitada:`, e.message));
+      return json(res, 202, { task }), true;
+    }
+    if (method === "GET" && path.match(/^\/ops\/api\/agent-tasks\/[^/]+$/)) {
+      const id = path.substring("/ops/api/agent-tasks/".length);
+      const task = await getAgentTask(id);
+      return json(res, task ? 200 : 404, task || { error: "Task não encontrada" }), true;
+    }
+    if (method === "POST" && path.match(/^\/ops\/api\/agent-tasks\/[^/]+\/retry$/)) {
+      const id = path.split("/")[4];
+      const original = await getAgentTask(id);
+      if (!original) return json(res, 404, { error: "Task não encontrada" }), true;
+      if (original.status !== "failed" && original.status !== "rejected") {
+        return json(res, 400, { error: "Só é possível reexecutar tasks 'failed' ou 'rejected'" }), true;
+      }
+      const { rows } = await pg.query(
+        `select slug, display_name, local_path, git_provider, git_owner, git_repo, default_branch, codereview_model
+         from handoff_projects where slug = $1`,
+        [original.project_slug]
+      );
+      if (!rows.length) return json(res, 404, { error: `Projeto "${original.project_slug}" não encontrado` }), true;
+      // Clona como task nova em vez de reciclar o id — preserva o log/erro da tentativa
+      // original no kanban (histórico) em vez de sobrescrever.
+      const retryTask = await createAgentTask({
+        title: original.title,
+        description: original.description,
+        project_slug: original.project_slug,
+        engine: original.engine,
+        model: original.model,
+      });
+      executeAgentTask(retryTask, rows[0]).catch((e) => console.error(`[TaskAgent] retry ${retryTask.id} rejeitada:`, e.message));
+      return json(res, 202, { task: retryTask }), true;
+    }
+    if (method === "POST" && path.match(/^\/ops\/api\/agent-tasks\/[^/]+\/approve$/)) {
+      const id = path.split("/")[4];
+      const task = await getAgentTask(id);
+      if (!task) return json(res, 404, { error: "Task não encontrada" }), true;
+      if (!task.pr_number) return json(res, 400, { error: "Task sem PR aberto" }), true;
+      const { rows: projRows } = await pg.query(`select git_owner, git_repo from handoff_projects where slug = $1`, [task.project_slug]);
+      if (!projRows.length || !projRows[0].git_owner || !projRows[0].git_repo) {
+        return json(res, 404, { error: "Projeto sem git_owner/git_repo" }), true;
+      }
+      const { git_owner: owner, git_repo: repo } = projRows[0];
+      const token = await getGithubToken();
+      if (!token) return json(res, 500, { error: "GITHUB_TOKEN não configurado" }), true;
+      const taskPrCheck = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${task.pr_number}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      if (taskPrCheck?.merged) {
+        await updateAgentTask(id, { status: "merged" });
+        return json(res, 200, { merged: true, sha: taskPrCheck.merge_commit_sha, alreadyMerged: true }), true;
+      }
+      const mergeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${task.pr_number}/merge`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+        body: JSON.stringify({ merge_method: "squash" }),
+      });
+      const mergeData = await mergeRes.json().catch(() => ({}));
+      if (!mergeRes.ok) return json(res, 422, { error: mergeData.message || `GitHub HTTP ${mergeRes.status}` }), true;
+      await updateAgentTask(id, { status: "merged" });
+      return json(res, 200, { merged: true, sha: mergeData.sha }), true;
+    }
+    if (method === "POST" && path.match(/^\/ops\/api\/agent-tasks\/[^/]+\/reject$/)) {
+      const id = path.split("/")[4];
+      const task = await getAgentTask(id);
+      if (!task) return json(res, 404, { error: "Task não encontrada" }), true;
+      if (task.pr_number) {
+        const { rows: projRows } = await pg.query(`select git_owner, git_repo from handoff_projects where slug = $1`, [task.project_slug]);
+        if (projRows.length && projRows[0].git_owner && projRows[0].git_repo) {
+          const token = await getGithubToken();
+          if (token) {
+            await fetch(`https://api.github.com/repos/${projRows[0].git_owner}/${projRows[0].git_repo}/pulls/${task.pr_number}`, {
+              method: "PATCH",
+              headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+              body: JSON.stringify({ state: "closed" }),
+            }).catch(() => {});
+          }
+        }
+      }
+      await updateAgentTask(id, { status: "rejected" });
+      return json(res, 200, { rejected: true }), true;
+    }
+    if (method === "DELETE" && path.match(/^\/ops\/api\/agent-tasks\/[^/]+$/)) {
+      const id = path.substring("/ops/api/agent-tasks/".length);
+      await deleteAgentTask(id);
+      return json(res, 200, { deleted: true }), true;
+    }
+    if (method === "POST" && path === "/ops/api/cifix/run") {
+      const body = await readBody(req);
+      if (!body.slug) return json(res, 400, { error: "slug obrigatório" }), true;
+      const result = await runCiFixForSlug(String(body.slug), {
+        prNumber: body.prNumber ? Number(body.prNumber) : undefined,
+        model: body.model ? String(body.model) : undefined,
+      });
+      return json(res, result.ok ? 200 : 422, result), true;
+    }
+    if (method === "GET" && path === "/ops/api/cifix/attempts") {
+      const url = new URL(req.url || "", "http://x");
+      const slug = url.searchParams.get("slug");
+      const { rows } = await pg.query(
+        `select * from ci_fix_attempts ${slug ? "where project_slug = $1" : ""} order by created_at desc limit 20`,
+        slug ? [slug] : []
+      ).catch(() => ({ rows: [] as any[] }));
+      return json(res, 200, rows), true;
     }
     if (method === "POST" && path.match(/^\/ops\/api\/projects\/[^/]+\/model$/)) {
       const slug = path.split("/")[4];

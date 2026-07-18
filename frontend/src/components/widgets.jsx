@@ -46,15 +46,21 @@ import { Icon, HDLib } from './icons.jsx';
   }
 
   // ---- Tabela genérica ----
-  function DataTable({ cols, rows, empty = 'Nenhum registro.' }) {
+  // pageSize: renderiza só as N primeiras linhas + botão "Mostrar mais" (evita listas de centenas de linhas)
+  function DataTable({ cols, rows, empty = 'Nenhum registro.', pageSize }) {
+    const [limit, setLimit] = React.useState((pageSize && pageSize > 0) ? pageSize : Infinity);
     if (!rows.length) return React.createElement('div', { className: 'empty' }, empty);
+    const visible = rows.length > limit ? rows.slice(0, limit) : rows;
+    const hidden = rows.length - visible.length;
     return React.createElement('div', { className: 'table-wrap' },
       React.createElement('table', { className: 'tbl' },
         React.createElement('thead', null, React.createElement('tr', null,
           cols.map((c, i) => React.createElement('th', { key: i, style: c.w ? { width: c.w } : null, className: c.align === 'right' ? 'ar' : '' }, c.label)))),
         React.createElement('tbody', null,
-          rows.map((r, ri) => React.createElement('tr', { key: ri, className: r._onClick ? 'row-click' : '', onClick: r._onClick },
+          visible.map((r, ri) => React.createElement('tr', { key: ri, className: r._onClick ? 'row-click' : '', onClick: r._onClick },
             cols.map((c, ci) => React.createElement('td', { key: ci, className: cls(c.mono && 'mono', c.muted && 'muted', c.align === 'right' && 'ar', c.nowrap && 'nowrap') }, c.render ? c.render(r) : r[c.key])))))),
+      hidden > 0 && React.createElement('button', { className: 'tbl-more', onClick: () => setLimit((l) => l + (pageSize || 25)) },
+        'Mostrar mais ', React.createElement('b', { className: 'mono' }, Math.min(hidden, pageSize || 25)), ' de ', React.createElement('b', { className: 'mono' }, hidden), ' restantes'),
     );
   }
 
