@@ -46,13 +46,24 @@ export async function runVerify(opts: {
 
   await pg.query(`update codereview_attacks set current_step = $2 where id = $1`, [attackId, "aguardando verificação do Daemon-Verifier…"]);
 
-  const { rows } = await pg.query(`select branch, pr_number, pr_url from codereview_attacks where id = $1`, [attackId]);
+  const { rows } = await pg.query(`select branch, pr_number, pr_url, log from codereview_attacks where id = $1`, [attackId]);
   if (!rows.length || !rows[0].pr_number) return { ok: false, error: "attack sem PR associado — nada pra verificar" };
-  const { pr_number: prNumber } = rows[0];
+  const { pr_number: prNumber, log: attackLog } = rows[0];
   const { git_owner: owner, git_repo: repo } = project;
   if (!owner || !repo) return { ok: false, error: `Projeto ${project.slug} sem git_owner/git_repo` };
 
   try {
+    // PR já mergeado/fechado (ex.: humano aprovou manualmente entre rodadas) — nada a verificar,
+    // postar review ou commitar nele só geraria erro 422 do GitHub. Encerra o ciclo como aprovado.
+    const prInfo = await gh(`/repos/${owner}/${repo}/pulls/${prNumber}`).catch(() => null);
+    if (prInfo?.merged || prInfo?.state === "closed") {
+      await pg.query(
+        `update codereview_attacks set verify_status = 'approved', current_step = $2 where id = $1`,
+        [attackId, prInfo.merged ? "PR já mergeado — ciclo encerrado" : "PR já fechado — ciclo encerrado"]
+      );
+      return { ok: true, verdict: "approved", newIssues: [] };
+    }
+
     await pg.query(`update codereview_attacks set current_step = $2 where id = $1`, [attackId, `Daemon-Verifier (${model}) lendo diff do PR #${prNumber}…`]);
     const diff = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
       headers: { Authorization: `Bearer ${await getGithubToken()}`, Accept: "application/vnd.github.v3.diff" },
@@ -64,7 +75,7 @@ export async function runVerify(opts: {
         { role: "system", content: verifySkill(project.display_name) },
         {
           role: "user",
-          content: `ISSUES ORIGINAIS A RESOLVER:\n${JSON.stringify(opts.originalIssues, null, 2)}\n\nDIFF ATUAL DO PR #${prNumber}:\n${diff.slice(0, 60000)}`,
+          content: `ISSUES ORIGINAIS A RESOLVER:\n${JSON.stringify(opts.originalIssues, null, 2)}\n\nLOG DO FIX-AGENT (o que ele fez com cada issue, incluindo justificativas de skip):\n${JSON.stringify(attackLog || [], null, 2)}\n\nDIFF ATUAL DO PR #${prNumber}:\n${diff.slice(0, 60000)}`,
         },
       ],
       { jsonMode: true, model }
@@ -72,13 +83,23 @@ export async function runVerify(opts: {
     const result: VerifyResult = JSON.parse(extractJson(raw));
 
     await pg.query(`update codereview_attacks set current_step = $2 where id = $1`, [attackId, `postando review (${result.verdict}) no PR #${prNumber}…`]);
+    // GITHUB_TOKEN é do próprio dono do PR (mesma conta que o fix-agent usa pra abrir o PR) —
+    // GitHub bloqueia auto-aprovação com 422 "You can't approve your own pull request diff" se
+    // event="APPROVE" for enviado aqui. Sempre comenta (COMMENT); a aprovação em si é decidida
+    // pelo verify_status salvo no banco e pelo botão "Aprovar e Mergear" do painel, não pelo
+    // estado de review do GitHub.
     await gh(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, {
       method: "POST",
       body: JSON.stringify({
-        body: `🤖 **Daemon-Verifier** (${model})\n\n${result.comment}`,
-        event: result.verdict === "approved" ? "APPROVE" : "COMMENT",
+        body: `🤖 **Daemon-Verifier** (${model}) — ${result.verdict === "approved" ? "✅ aprovado" : "🔁 mudanças solicitadas"}\n\n${result.comment}`,
+        event: "COMMENT",
       }),
-    }).catch((e) => console.warn("[Verifier] falha ao postar review:", e.message));
+    }).catch(async (e) => {
+      console.warn("[Verifier] falha ao postar review:", e.message);
+      await pg.query(`update codereview_attacks set verify_notes = $2 where id = $1`, [
+        attackId, `${result.comment}\n\n⚠️ Comentário não foi postado no PR (falha na API do GitHub): ${e.message.slice(0, 200)}`,
+      ]).catch(() => {});
+    });
 
     await pg.query(
       `update codereview_attacks set verify_status = $2, verify_notes = $3, current_step = $4 where id = $1`,

@@ -810,15 +810,30 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
     // Enquanto houver ciclo running, polla a cada 2s — current_step muda a cada fase
     // (revisando/commitando/verificando), então intervalo curto é o que dá a sensação de
     // "ver o agente trabalhando" em vez de só um spinner sem contexto.
+    // Depende só de `attacking` (não de `attacks`, que muda a cada poll) — antes recriava o
+    // interval a cada tick e, se a lista buscada num instante intermediário não trouxesse
+    // nenhum item running (race com o insert no banco, ou só timing), o efeito saía sem nunca
+    // ligar o polling e sem resetar `attacking`, travando o botão em "Atacando…" pra sempre
+    // (só um F5 recarregava attacks do zero e corrigia o estado).
     React.useEffect(() => {
-      if (!attacks.some(a => a.status === 'running')) return;
+      if (!attacking) return;
       const t = setInterval(() => {
         loadAttacks().then(list => {
           if (!list.some(a => a.status === 'running')) { setAttacking(false); load(); }
         });
       }, 2000);
       return () => clearInterval(t);
-    }, [attacks, loadAttacks, load]);
+    }, [attacking, loadAttacks, load]);
+
+    // Timers de JS são clampados/pausados em aba em segundo plano por muitos browsers — ao
+    // voltar o foco, força um refresh imediato em vez de esperar o próximo tick do polling
+    // (que pode ter ficado parado o tempo todo que a aba esteve oculta).
+    React.useEffect(() => {
+      const onVisible = () => { if (document.visibilityState === 'visible') { loadAttacks(); load(); } };
+      document.addEventListener('visibilitychange', onVisible);
+      window.addEventListener('focus', onVisible);
+      return () => { document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); };
+    }, [loadAttacks, load]);
 
     const mergeReport = React.useCallback((slug, prNumber) => {
       if (!prNumber || merging) return;
@@ -1358,12 +1373,21 @@ import { HandoffFlow, AgentSummary, AgentMark } from './flow.jsx';
       fetchTasks();
     }, [fetchTasks]);
 
+    const hasActive = tasks.some(t => t.status === 'queued' || t.status === 'running');
     React.useEffect(() => {
-      const hasActive = tasks.some(t => t.status === 'queued' || t.status === 'running');
       if (!hasActive) return;
       const id = setInterval(fetchTasks, 4000);
       return () => clearInterval(id);
-    }, [tasks, fetchTasks]);
+    }, [hasActive, fetchTasks]);
+
+    // Mesmo caveat do painel de Code Review: browser pode clampar setInterval em aba oculta —
+    // refresh imediato ao voltar o foco evita depender de F5 pra ver o estado atualizado.
+    React.useEffect(() => {
+      const onVisible = () => { if (document.visibilityState === 'visible') fetchTasks(); };
+      document.addEventListener('visibilitychange', onVisible);
+      window.addEventListener('focus', onVisible);
+      return () => { document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); };
+    }, [fetchTasks]);
 
     // Mantém a task selecionada (drawer aberto) sincronizada com a lista.
     React.useEffect(() => {

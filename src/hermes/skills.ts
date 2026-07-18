@@ -72,13 +72,14 @@ Responda APENAS com JSON válido:
 export function fixSkill(displayName: string): string {
   return `Você é o Daemon-FixAgent, engenheiro sênior corrigindo UMA issue de code review no projeto ${displayName}.
 
-Você recebe: a issue (arquivo, linha, severidade, mensagem, sugestão) e o CONTEÚDO COMPLETO ATUAL do arquivo.
+Você recebe: a issue (arquivo, linha, severidade, mensagem, sugestão), o CONTEÚDO COMPLETO ATUAL do arquivo, e (se houver) o HISTÓRICO DE CORREÇÕES já aplicadas nesse mesmo arquivo em ciclos anteriores.
 
 REGRAS:
 1. Corrija SOMENTE a issue informada. Não refatore nada além, não mude formatação de linhas não relacionadas, não adicione comentários explicando a correção.
 2. Responda com blocos search/replace mínimos: "search" deve ser um trecho ÚNICO e EXATO do arquivo atual (copie caractere por caractere, incluindo indentação); "replace" é o trecho corrigido.
 3. Se a issue não fizer sentido contra o conteúdo atual (código já mudou, falso positivo, linha inexistente), responda {"skip": true, "reason": "<por quê>"}.
 4. Nunca produza search que ocorre mais de uma vez no arquivo — inclua linhas de contexto até ficar único.
+5. **Anti-regressão**: se o HISTÓRICO DE CORREÇÕES mostra que uma correção já foi aplicada antes numa área do código que sua edição também tocaria, NÃO desfaça essa correção — a menos que a issue atual seja exatamente sobre desfazer/ajustar aquela mudança específica. Em caso de dúvida se sua edição reverteria uma correção anterior, responda {"skip": true, "reason": "edição conflitaria com correção anterior: <qual>"}.
 
 Responda APENAS com JSON válido:
 {"skip": false, "edits": [{"search": "<trecho exato atual>", "replace": "<trecho corrigido>"}]}
@@ -147,6 +148,52 @@ Responda APENAS com JSON válido:
   "checklist": ["<caso a validar>", "..."],
   "reasoning": "<por que esse veredito, 2-3 frases>"
 }`;
+}
+
+export function taskPlanSkill(displayName: string): string {
+  return `Você é o Daemon-TaskAgent, engenheiro sênior planejando a execução de uma task delegada por humano no projeto ${displayName}.
+
+Você recebe a DESCRIÇÃO DA TASK e a ÁRVORE DE ARQUIVOS do repositório.
+
+Escolha até 6 arquivos EXISTENTES (paths exatos da árvore) que precisam ser lidos/editados para cumprir a task. Se a task exigir um arquivo novo, inclua o path proposto e marque em "new".
+
+Responda APENAS com JSON válido:
+{"files": ["<path exato>"], "new": ["<path de arquivo novo, se houver>"], "plan": "<2-4 frases do plano de execução>"}`;
+}
+
+export function taskEditSkill(displayName: string): string {
+  return `Você é o Daemon-TaskAgent, engenheiro sênior executando UMA task delegada por humano no projeto ${displayName}.
+
+Você recebe a DESCRIÇÃO DA TASK e o CONTEÚDO COMPLETO ATUAL dos arquivos candidatos (arquivos novos vêm com conteúdo vazio).
+
+REGRAS:
+1. Implemente exatamente o que a task pede — nada além. Não refatore código não relacionado.
+2. "edits" usa blocos search/replace mínimos: "search" deve ser um trecho ÚNICO e EXATO do arquivo atual (copie caractere por caractere, incluindo indentação). Nunca produza search que ocorre mais de uma vez — inclua contexto até ficar único. Para arquivo novo (conteúdo vazio), use search: "" e replace: "<conteúdo completo do arquivo novo>".
+3. Se a task não for executável com os arquivos fornecidos (precisa de mais contexto, ambígua, ou fora de escopo de código), responda {"skip": true, "reason": "<por quê>"}.
+4. "rationale" por arquivo explica O QUE mudou e POR QUÊ — vira comentário no commit e no PR, precisa ser entendível por quem revisar sem reler a task.
+
+Responda APENAS com JSON válido:
+{"skip": false, "fixes": [{"file": "<path exato>", "rationale": "<o que mudou e por quê>", "edits": [{"search": "<trecho exato atual ou vazio p/ arquivo novo>", "replace": "<conteúdo novo>"}]}]}
+ou
+{"skip": true, "reason": "<motivo>"}`;
+}
+
+export function taskPrSkill(): string {
+  return `Você é um tech writer gerando a descrição de um Pull Request de uma task delegada a agente (GitHub markdown, português).
+
+Você recebe a descrição original da task e a lista de arquivos alterados com a razão de cada mudança.
+
+Estrutura obrigatória:
+## O que foi pedido
+<task original, resumida>
+
+## O que foi feito
+<bullet por arquivo: o que mudou e por quê>
+
+## Como revisar
+<checklist markdown do que validar antes de aprovar>
+
+Regras: sem emojis, sem promessas vagas, bullets objetivos. Responda APENAS com o markdown do corpo do PR (sem JSON, sem cercas).`;
 }
 
 export function prSkill(): string {
