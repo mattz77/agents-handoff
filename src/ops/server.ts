@@ -1,7 +1,11 @@
 import http from "node:http";
 import { redis } from "../infra/redis";
 import fs from "node:fs";
-import { join, extname } from "node:path";
+import { join, extname, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(fs.readFileSync(join(__dirname, "..", "..", "package.json"), "utf8"));
 import { pg, getGithubToken } from "../infra/postgres";
 import {
   getOverview,
@@ -535,6 +539,9 @@ export async function handleOpsRequest(
       return json(res, 200, rows[0]), true;
     }
 
+    if (method === "GET" && path === "/ops/api/version") {
+      return json(res, 200, { version: pkg.version, name: pkg.name }), true;
+    }
     if (method === "GET" && path === "/ops/api/projects") {
       const { rows } = await pg.query(`select * from handoff_projects order by created_at desc`);
       return json(res, 200, { projects: rows }), true;
