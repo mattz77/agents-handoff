@@ -92,6 +92,13 @@ export function DeployPanel() {
 
   React.useEffect(() => { loadProjects(); loadHistory(); }, []);
 
+  // Branches vêm do worker de host (só ele tem git de verdade) — refeteca a lista de
+  // projetos periodicamente pra pegar branch nova sem precisar de F5.
+  React.useEffect(() => {
+    const t = setInterval(loadProjects, 10_000);
+    return () => clearInterval(t);
+  }, [loadProjects]);
+
   React.useEffect(() => {
     if (current && current.log && current.log.length) {
       logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -138,6 +145,15 @@ export function DeployPanel() {
   const anyBusy = !!busyAction;
   const running = current && (current.status === "pending" || current.status === "running");
   const currentProject = projects.find(p => p.slug === projectSlug);
+  const branchOptions = currentProject?.branches || [];
+
+  // Se o branch selecionado sumiu da lista (trocou de projeto, ou branch foi deletado no
+  // remote), recai pra 'main' se existir, senão o primeiro disponível.
+  React.useEffect(() => {
+    if (branchOptions.length && !branchOptions.includes(branch)) {
+      setBranch(branchOptions.includes("main") ? "main" : branchOptions[0]);
+    }
+  }, [branchOptions.join(","), currentProject?.slug]);
 
   return (
     <div className="panel animate-fade-up stagger">
@@ -152,7 +168,13 @@ export function DeployPanel() {
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--muted-foreground)" }}>
               Branch
-              <input className="cb-input" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" style={{ width: 180 }} />
+              {branchOptions.length > 0 ? (
+                <select className="cb-input" value={branch} onChange={(e) => setBranch(e.target.value)} style={{ width: 200 }}>
+                  {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              ) : (
+                <input className="cb-input" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" title="worker ainda não listou os branches deste projeto" style={{ width: 200 }} />
+              )}
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--muted-foreground)" }}>
               Destino
@@ -169,6 +191,8 @@ export function DeployPanel() {
           {currentProject && target === "self-hosted" && (
             <div className="muted mono" style={{ fontSize: 11 }}>
               {currentProject.local_path} · serviço <code>{currentProject.compose_service}</code>
+              {currentProject.branches_updated_at && ` · branches atualizados ${new Date(currentProject.branches_updated_at).toLocaleTimeString("pt-BR")}`}
+              {!branchOptions.length && " · worker ainda não listou branches — aguarde ~20s ou confira se o worker está rodando"}
             </div>
           )}
 

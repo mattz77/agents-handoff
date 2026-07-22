@@ -29,6 +29,8 @@ export interface DeployProjectRow {
   local_path: string;
   compose_service: string;
   vercel_deploy_hook_url: string | null;
+  branches: string[];
+  branches_updated_at: string | null;
   created_at: string;
 }
 
@@ -41,6 +43,8 @@ async function ensureTables() {
     vercel_deploy_hook_url text,
     created_at timestamptz not null default now()
   )`);
+  await pg.query(`alter table deploy_projects add column if not exists branches jsonb not null default '[]'::jsonb`);
+  await pg.query(`alter table deploy_projects add column if not exists branches_updated_at timestamptz`);
   // Seed do próprio handoff-daemon — sempre existe, é o repo onde este worker roda.
   await pg.query(`insert into deploy_projects (slug, display_name, local_path, compose_service)
     values ('handoff-daemon', 'Handoff Daemon', '.', 'handoff-daemon')
@@ -125,6 +129,16 @@ export async function claimNextPendingDeployRequest(): Promise<DeployRequestRow 
      returning *`
   );
   return rows[0] || null;
+}
+
+// Chamado só pelo worker de host — reflete o resultado real de `git for-each-ref` no
+// local_path do projeto, pra o seletor de branch no painel não depender de digitação manual.
+export async function updateDeployProjectBranches(slug: string, branches: string[]): Promise<void> {
+  await ensureTables();
+  await pg.query(
+    `update deploy_projects set branches = $2::jsonb, branches_updated_at = now() where slug = $1`,
+    [slug, JSON.stringify(branches)]
+  );
 }
 
 export async function getDeployProject(slug: string): Promise<DeployProjectRow | null> {

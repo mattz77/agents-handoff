@@ -11,7 +11,9 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
+const util = require("node:util");
+const execFileP = util.promisify(execFile);
 
 const REPO_ROOT = path.join(__dirname, "..");
 
@@ -30,9 +32,12 @@ const {
   appendDeployLog,
   finishDeployRequest,
   getDeployProject,
+  listDeployProjects,
+  updateDeployProjectBranches,
 } = require(path.join(REPO_ROOT, "dist", "ops", "deploy-data.js"));
 
 const POLL_MS = 2000;
+const BRANCHES_REFRESH_MS = 20_000;
 const BRANCH_RE = /^[A-Za-z0-9._/-]{1,100}$/;
 
 function runStreamed(id, cmd, args, opts) {
@@ -97,6 +102,44 @@ async function runVercel(row, project) {
   if (!r.ok) throw new Error(`Vercel hook HTTP ${r.status}`);
 }
 
+// Roda em paralelo ao tick de deploy — mantém deploy_projects.branches em dia pro
+// seletor do painel, sem depender do usuário digitar o nome do branch de cabeça.
+async function refreshBranchesForProject(project) {
+  const cwd = resolveLocalPath(project.local_path);
+  if (!fs.existsSync(cwd)) return;
+  try {
+    await execFileP("git", ["fetch", "--prune", "origin"], { cwd, timeout: 30_000 });
+  } catch {
+    // Sem rede/remote configurado — segue só com o que já existe localmente.
+  }
+  try {
+    const { stdout } = await execFileP(
+      "git",
+      ["for-each-ref", "--format=%(refname:short)", "refs/heads/", "refs/remotes/origin/"],
+      { cwd, timeout: 15_000 }
+    );
+    const names = stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => l.replace(/^origin\//, ""))
+      .filter((l) => l !== "HEAD");
+    const unique = [...new Set(names)].sort((a, b) => (a === "main" ? -1 : b === "main" ? 1 : a.localeCompare(b)));
+    await updateDeployProjectBranches(project.slug, unique);
+  } catch (e) {
+    console.error(`[deploy-worker] falha ao listar branches de ${project.slug}:`, e.message || e);
+  }
+}
+
+async function refreshBranchesLoop() {
+  try {
+    const projects = await listDeployProjects();
+    for (const p of projects) await refreshBranchesForProject(p);
+  } catch (e) {
+    console.error("[deploy-worker] erro no refresh de branches:", e.message || e);
+  }
+}
+
 async function tick() {
   const row = await claimNextPendingDeployRequest();
   if (!row) return;
@@ -117,3 +160,6 @@ async function tick() {
 console.log("[deploy-worker] iniciado — polling deploy_requests a cada", POLL_MS, "ms");
 setInterval(() => { tick().catch((e) => console.error("[deploy-worker] erro no tick:", e)); }, POLL_MS);
 tick().catch((e) => console.error("[deploy-worker] erro no tick inicial:", e));
+
+setInterval(() => { refreshBranchesLoop().catch((e) => console.error("[deploy-worker] erro no refresh de branches:", e)); }, BRANCHES_REFRESH_MS);
+refreshBranchesLoop().catch((e) => console.error("[deploy-worker] erro no refresh de branches inicial:", e));
