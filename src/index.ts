@@ -8,6 +8,7 @@ import { handleGithubWebhook } from "./ops/github-webhook";
 import { startRagWatcher } from "./hermes/rag-watcher";
 import { startCodeReviewCron } from "./ops/codereview-cron";
 import { checkBrainSizeAlert } from "./ops/metrics";
+import { ensurePromotionColumn } from "./ops/promotion";
 import http from "node:http";
 import os from "node:os";
 
@@ -73,6 +74,9 @@ startRagWatcher();
 
 // Inicia o agendador de Code Review Diário
 startCodeReviewCron();
+
+// Coluna de promoção pra branch final (main/master) — idempotente, roda 1x por boot
+ensurePromotionColumn().catch((e) => console.error("[Promotion] falha ao garantir coluna:", e?.message));
 
 // Guard-rail: checa tamanho do LLM-Brain (HOT files) a cada hora (TASK 35 Fase 6)
 checkBrainSizeAlert().catch((e) => console.error("[brain-size] check inicial falhou:", e?.message));

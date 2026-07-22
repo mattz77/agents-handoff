@@ -4,8 +4,9 @@
 // Opera 100% via GitHub API — os repos não são montados no container.
 import { pg } from "../infra/postgres";
 import { getGithubToken } from "../infra/postgres";
-import { nimChat, extractJson } from "./nim-client";
+import { providerChat, extractJson } from "./provider-client";
 import { fixSkill, prSkill } from "./skills";
+import { detectStackFacts, staticGuard } from "./agent-safety";
 import { CodeReviewIssue } from "./git-commenter";
 import { ProjectRow } from "./git-collector";
 
@@ -223,6 +224,8 @@ export async function runAttack(opts: RunAttackOpts): Promise<{ ok: boolean; att
       }
     }
 
+    const stackFacts = await detectStackFacts(gh, owner, repo, branch);
+
     const log: AttackLogEntry[] = [];
     const fixedDescriptions: string[] = [];
     let fixed = 0;
@@ -251,9 +254,9 @@ export async function runAttack(opts: RunAttackOpts): Promise<{ ok: boolean; att
         const fixHistory = await getFileFixHistory(project.slug, issue.file, attackId);
 
         await setStep(attackId, `[${idx + 1}/${issues.length}] pedindo correção pro modelo (${short})…`);
-        const raw = await nimChat(
+        const raw = await providerChat(
           [
-            { role: "system", content: fixSkill(project.display_name) },
+            { role: "system", content: fixSkill(project.display_name, stackFacts.summary) },
             {
               role: "user",
               content: [
@@ -278,6 +281,13 @@ export async function runAttack(opts: RunAttackOpts): Promise<{ ok: boolean; att
         if (!applied.ok) {
           entry.status = "error";
           entry.detail = applied.error || "falha ao aplicar edits";
+          log.push(entry);
+          continue;
+        }
+        const guard = staticGuard(issue.file, applied.content, stackFacts);
+        if (!guard.ok) {
+          entry.status = "error";
+          entry.detail = `bloqueado pela guarda de stack — ${guard.reason}`;
           log.push(entry);
           continue;
         }
@@ -329,7 +339,7 @@ export async function runAttack(opts: RunAttackOpts): Promise<{ ok: boolean; att
       await setStep(attackId, "gerando descrição do PR…");
       let prBody: string;
       try {
-        prBody = await nimChat(
+        prBody = await providerChat(
           [
             { role: "system", content: prSkill() },
             { role: "user", content: `Correções aplicadas (projeto ${project.display_name}):\n${fixedDescriptions.join("\n")}` },

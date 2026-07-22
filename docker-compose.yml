@@ -48,6 +48,12 @@ services:
       - AGENT_API_TOKEN=${AGENT_API_TOKEN:-}
       # Webhook do GitHub (workflow_run -> Daemon-CIFixAgent)
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
+      # Provedores de IA (TASK 38) — master key p/ criptografar API keys OpenAI/Anthropic/NIM (AES-256-GCM)
+      - AGENT_PROVIDER_MASTER_KEY=${AGENT_PROVIDER_MASTER_KEY:-}
+      # OpenCode Go (TASK 39) — OpenAI-compatible em opencode.ai/zen/v1
+      - OPENCODE_GO_API_KEY=${OPENCODE_GO_API_KEY:-}
+      - OPENCODE_GO_BASE_URL=${OPENCODE_GO_BASE_URL:-https://opencode.ai/zen/v1}
+      - OPENCODE_GO_MODEL=${OPENCODE_GO_MODEL:-kimi-k2.5}
     extra_hosts:
       # Em Linux (vmaz) mapeia host.docker.internal p/ o gateway; no Docker Desktop já existe.
       - "host.docker.internal:host-gateway"

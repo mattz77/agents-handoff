@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { pg } from "../infra/postgres";
-import { nimChat, extractJson } from "./nim-client";
+import { providerChat, extractJson } from "./provider-client";
 import { collectGitContext, ProjectRow } from "./git-collector";
 import { postReviewComments, CodeReviewIssue } from "./git-commenter";
 import { reviewSkill, reviewAuditSkill, RECOMMENDED_MODELS } from "./skills";
@@ -51,7 +51,7 @@ async function auditIssues(
     || RECOMMENDED_MODELS.verify.find((m) => m !== reviewModel)
     || RECOMMENDED_MODELS.verify[0];
   try {
-    const raw = await nimChat(
+    const raw = await providerChat(
       [
         { role: "system", content: reviewAuditSkill(displayName) },
         {
@@ -143,7 +143,7 @@ export async function runCodeReviewForProject(project: ProjectRow, force = false
 
     const modelUsed = project.codereview_model || MODEL;
     setReviewStep(project.slug, `pedindo análise pro modelo (${modelUsed})…`);
-    const raw = await nimChat(
+    const raw = await providerChat(
       [
         { role: "system", content: systemPrompt(project.display_name) },
         { role: "user", content: userPayload },

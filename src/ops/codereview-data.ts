@@ -15,10 +15,13 @@ export async function getCodeReviewData(slug?: string) {
            join handoff_projects p on p.slug = r.project_slug
            order by r.created_at desc limit 50`
         );
-    return { reports: rows };
+    const { rows: projects } = await pg.query(
+      `select slug, display_name from handoff_projects where codereview_enabled = true order by display_name`
+    );
+    return { reports: rows, projects };
   } catch (error) {
     console.error("Erro ao obter dados de Code Review", error);
-    return { error: "Failed to load Code Review data", reports: [] };
+    return { error: "Failed to load Code Review data", reports: [], projects: [] };
   }
 }
 

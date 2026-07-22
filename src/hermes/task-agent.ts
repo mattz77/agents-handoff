@@ -7,11 +7,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getGithubToken } from "../infra/postgres";
-import { nimChat, extractJson } from "./nim-client";
+import { providerChat, extractJson } from "./provider-client";
 import { taskPlanSkill, taskEditSkill, taskPrSkill } from "./skills";
 import { ProjectRow } from "./git-collector";
 import { RECOMMENDED_MODELS } from "./skills";
 import { appendAgentTaskLog, updateAgentTask, AgentTask } from "../ops/agent-tasks";
+import { detectStackFacts, staticGuard } from "./agent-safety";
 
 const execFileAsync = promisify(execFile);
 const MODEL = process.env.LINTER_MODEL || "minimaxai/minimax-m3";
@@ -99,7 +100,7 @@ export async function runNimTask(task: AgentTask, project: TaskProject): Promise
     const fileTree: string[] = (treeResp?.tree || []).filter((e: any) => e.type === "blob").map((e: any) => e.path).slice(0, 4000);
 
     await appendAgentTaskLog(task.id, `Planejando execução com ${model}…`);
-    const planRaw = await nimChat(
+    const planRaw = await providerChat(
       [
         { role: "system", content: taskPlanSkill(project.display_name) },
         { role: "user", content: `TASK:\n${task.description}\n\nÁRVORE DO REPO:\n${fileTree.join("\n")}` },
@@ -137,10 +138,12 @@ export async function runNimTask(task: AgentTask, project: TaskProject): Promise
       return { ok: false, error: "arquivos planejados inacessíveis" };
     }
 
+    const stackFacts = await detectStackFacts(gh, owner, repo, branch);
+
     await appendAgentTaskLog(task.id, `Gerando edições para ${files.length} arquivo(s)…`);
-    const editRaw = await nimChat(
+    const editRaw = await providerChat(
       [
-        { role: "system", content: taskEditSkill(project.display_name) },
+        { role: "system", content: taskEditSkill(project.display_name, stackFacts.summary) },
         {
           role: "user",
           content: [
@@ -172,6 +175,11 @@ export async function runNimTask(task: AgentTask, project: TaskProject): Promise
         await appendAgentTaskLog(task.id, `${f.file}: edit não aplicado (${result.error})`);
         continue;
       }
+      const guard = staticGuard(target.path, result.content, stackFacts);
+      if (!guard.ok) {
+        await appendAgentTaskLog(task.id, `${f.file}: BLOQUEADO pela guarda de stack — ${guard.reason}`);
+        continue;
+      }
       await gh(`/repos/${owner}/${repo}/contents/${target.path}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -194,7 +202,7 @@ export async function runNimTask(task: AgentTask, project: TaskProject): Promise
     await appendAgentTaskLog(task.id, "Gerando descrição do PR…");
     let prBody: string;
     try {
-      prBody = await nimChat(
+      prBody = await providerChat(
         [
           { role: "system", content: taskPrSkill() },
           { role: "user", content: `TASK ORIGINAL:\n${task.description}\n\nARQUIVOS ALTERADOS:\n${applied.map((a) => `- ${a.file}: ${a.rationale}`).join("\n")}` },

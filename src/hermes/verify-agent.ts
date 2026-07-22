@@ -3,10 +3,11 @@
 // reprovar, devolve as issues que faltam pro fix-agent atacar de novo no MESMO PR.
 import { pg } from "../infra/postgres";
 import { getGithubToken } from "../infra/postgres";
-import { nimChat, extractJson } from "./nim-client";
+import { providerChat, extractJson } from "./provider-client";
 import { verifySkill } from "./skills";
 import { CodeReviewIssue } from "./git-commenter";
 import { ProjectRow } from "./git-collector";
+import { detectStackFacts, staticGuard } from "./agent-safety";
 
 const MODEL = process.env.LINTER_MODEL || "minimaxai/minimax-m3";
 
@@ -70,7 +71,7 @@ export async function runVerify(opts: {
     }).then((r) => (r.ok ? r.text() : ""));
 
     await pg.query(`update codereview_attacks set current_step = $2, verify_model = $3 where id = $1`, [attackId, "Daemon-Verifier avaliando correções…", model]);
-    const raw = await nimChat(
+    const raw = await providerChat(
       [
         { role: "system", content: verifySkill(project.display_name) },
         {
@@ -81,6 +82,37 @@ export async function runVerify(opts: {
       { jsonMode: true, model }
     );
     const result: VerifyResult = JSON.parse(extractJson(raw));
+
+    // Guarda determinística — o Verifier é só outro LLM lendo o diff em texto, não um compilador;
+    // pode aprovar código que sintaticamente parece certo mas não compila no stack real do projeto
+    // (ex.: PR #22, import.meta.url num projeto CommonJS). Roda a mesma checagem estática do
+    // Fix/Task/CIFixAgent em CIMA dos arquivos como ficaram no PR — se achar violação, força
+    // changes_requested independente do veredito do modelo, e devolve a violação como issue crítica
+    // pro fix-agent corrigir na próxima rodada.
+    const stackFacts = await detectStackFacts(gh, owner, repo, prInfo?.head?.ref || rows[0].branch);
+    const changedFiles: Array<{ filename: string; status: string }> = await gh(`/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`).catch(() => []);
+    const guardIssues: CodeReviewIssue[] = [];
+    for (const cf of changedFiles) {
+      if (cf.status === "removed") continue;
+      try {
+        const meta = await gh(`/repos/${owner}/${repo}/contents/${cf.filename}?ref=${prInfo?.head?.ref || rows[0].branch}`);
+        if (!meta || Array.isArray(meta)) continue;
+        const content = Buffer.from(meta.content, "base64").toString("utf8");
+        const guard = staticGuard(cf.filename, content, stackFacts);
+        if (!guard.ok) {
+          guardIssues.push({
+            file: cf.filename, line: null, severity: "critical", category: "bug",
+            message: `Guarda de stack (determinística): ${guard.reason}`,
+            suggestion: "", evidence: "detectado por regex pós-edit, não pelo modelo",
+          } as CodeReviewIssue);
+        }
+      } catch { /* arquivo ilegível/binário — segue sem checar */ }
+    }
+    if (guardIssues.length) {
+      result.verdict = "changes_requested";
+      result.newIssues = [...(Array.isArray(result.newIssues) ? result.newIssues : []), ...guardIssues];
+      result.comment = `⚠️ Guarda de stack bloqueou ${guardIssues.length} arquivo(s) (não compila no stack do projeto) — reprovado independente da análise do modelo.\n\n${guardIssues.map((i) => `- ${i.file}: ${i.message}`).join("\n")}\n\n${result.comment}`;
+    }
 
     await pg.query(`update codereview_attacks set current_step = $2 where id = $1`, [attackId, `postando review (${result.verdict}) no PR #${prNumber}…`]);
     // GITHUB_TOKEN é do próprio dono do PR (mesma conta que o fix-agent usa pra abrir o PR) —

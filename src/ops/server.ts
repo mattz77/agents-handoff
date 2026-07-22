@@ -26,6 +26,8 @@ import { getCodeReviewData, getCodeReviewReport } from "./codereview-data";
 import { runCodeReviewForSlug, runAttackForSlug, runCiFixForSlug, isAttacking } from "./codereview-cron";
 import { getReviewProgress, getAllReviewProgress } from "../hermes/review-progress";
 import { listNimModels } from "../hermes/nim-client";
+import { listProviderModels, testProvider, invalidateProviderCache, providerStatus, isProviderConfigured, ProviderType } from "../hermes/provider-client";
+import { encryptSecret, secretsEnabled } from "../infra/secret-box";
 import { RECOMMENDED_MODELS } from "../hermes/skills";
 import { replayFromDlq } from "./replay";
 import { transitionStatus } from "../outbox";
@@ -33,6 +35,8 @@ import { verifyAccess, accessConfigured } from "./cf-access";
 import { ragService } from "../infra/datalake-rag";
 import { createAgentTask, listAgentTasks, getAgentTask, updateAgentTask, deleteAgentTask } from "./agent-tasks";
 import { executeAgentTask } from "../hermes/task-agent";
+import { ensurePromotionColumn, ensurePromotionPr } from "./promotion";
+import { detectConflicts, resolveConflicts, getConflictAttempt } from "../hermes/conflict-agent";
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   const s = JSON.stringify(body);
@@ -265,7 +269,17 @@ export async function handleOpsRequest(
     if (method === "GET" && path === "/ops/api/codereview/models") {
       try {
         const ids = await listNimModels();
-        return json(res, 200, { models: ids, recommended: RECOMMENDED_MODELS }), true;
+        // Anexa modelos de provedores externos configurados, prefixados (openai:/anthropic:)
+        // pra o mesmo seletor rotear via providerChat. Falha de um provider não derruba a lista.
+        const extra: string[] = [];
+        for (const p of ["openai", "anthropic", "opencode"] as ProviderType[]) {
+          try {
+            if (!(await isProviderConfigured(p))) continue; // só provider com key entra no seletor
+            const ms = await listProviderModels(p);
+            for (const m of ms) extra.push(`${p}:${m}`);
+          } catch { /* provider sem key/off — ignora */ }
+        }
+        return json(res, 200, { models: [...ids, ...extra], recommended: RECOMMENDED_MODELS }), true;
       } catch (e) {
         return json(res, 502, { error: (e as Error).message }), true;
       }
@@ -322,11 +336,16 @@ export async function handleOpsRequest(
     if (method === "POST" && path === "/ops/api/codereview/merge") {
       const body = await readBody(req);
       if (!body.slug || !body.prNumber) return json(res, 400, { error: "Campos 'slug' e 'prNumber' são obrigatórios" }), true;
-      const { rows: projRows } = await pg.query(`select git_owner, git_repo from handoff_projects where slug = $1`, [body.slug]);
+      await ensurePromotionColumn();
+      const { rows: projRows } = await pg.query(
+        `select display_name, git_owner, git_repo, default_branch, promote_to_branch from handoff_projects where slug = $1`,
+        [body.slug]
+      );
       if (!projRows.length || !projRows[0].git_owner || !projRows[0].git_repo) {
         return json(res, 404, { error: `Projeto "${body.slug}" não encontrado ou sem git_owner/git_repo` }), true;
       }
-      const { git_owner: owner, git_repo: repo } = projRows[0];
+      const project = projRows[0];
+      const { git_owner: owner, git_repo: repo } = project;
       const token = await getGithubToken();
       if (!token) return json(res, 500, { error: "GITHUB_TOKEN não configurado" }), true;
       // Já mergeado (ex.: humano mergeou direto no GitHub) — PUT merge de novo dá 405 do GitHub.
@@ -346,11 +365,18 @@ export async function handleOpsRequest(
         mergeData = await mergeRes.json().catch(() => ({}));
         if (!mergeRes.ok) return json(res, 422, { error: mergeData.message || `GitHub HTTP ${mergeRes.status}` }), true;
       }
+      // Só promove quando o PR mergeado tinha como base o branch de trabalho do projeto — PRs
+      // satélite de rodadas de fix já commitam direto nele (fix-agent.ts), então isso cobre o
+      // caso comum sem abrir PR de promoção pra todo merge de sub-branch avulso.
+      let promotion: Awaited<ReturnType<typeof ensurePromotionPr>> | undefined;
+      if (prCheck?.base?.ref === project.default_branch) {
+        promotion = await ensurePromotionPr(project);
+      }
       await pg.query(
         `update codereview_attacks set current_step = 'PR mergeado manualmente' where pr_number = $2 and project_slug = $1`,
         [body.slug, body.prNumber]
       ).catch(() => {});
-      return json(res, 200, { merged: true, sha: mergeData.sha, alreadyMerged: !!mergeData.alreadyMerged }), true;
+      return json(res, 200, { merged: true, sha: mergeData.sha, alreadyMerged: !!mergeData.alreadyMerged, promotion }), true;
     }
     if (method === "GET" && path === "/ops/api/codereview/prs") {
       // PRs abertos + últimos mergeados do projeto — alimenta o card "Pull Requests" do painel.
@@ -374,10 +400,54 @@ export async function handleOpsRequest(
         number: p.number, title: p.title, url: p.html_url, head: p.head?.ref, base: p.base?.ref,
         draft: !!p.draft, mergedAt: p.merged_at, createdAt: p.created_at, author: p.user?.login,
       });
+      // mergeable_state só vem no GET de PR individual, não na listagem — busca 1x por PR aberto
+      // (lista é pequena, até 10) pra mostrar badge de conflito sem precisar abrir o GitHub.
+      const openWithConflict = await Promise.all((open as any[]).map(async (p) => {
+        const detail = await fetch(`https://api.github.com/repos/${projRows[0].git_owner}/${projRows[0].git_repo}/pulls/${p.number}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+        }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        return { ...pick(p), conflicted: detail?.mergeable_state === "dirty", mergeableState: detail?.mergeable_state ?? null };
+      }));
       return json(res, 200, {
-        open: (open as any[]).map(pick),
+        open: openWithConflict,
         merged: (closed as any[]).filter((p) => p.merged_at).slice(0, 5).map(pick),
       }), true;
+    }
+    if (method === "GET" && path === "/ops/api/codereview/conflicts") {
+      const slug = url.searchParams.get("slug");
+      const prNumber = Number(url.searchParams.get("prNumber"));
+      if (!slug || !prNumber) return json(res, 400, { error: "Params 'slug' e 'prNumber' são obrigatórios" }), true;
+      const { rows: projRows } = await pg.query(
+        `select slug, display_name, local_path, git_provider, git_owner, git_repo, default_branch, codereview_model
+         from handoff_projects where slug = $1`,
+        [slug]
+      );
+      if (!projRows.length) return json(res, 404, { error: `Projeto "${slug}" não encontrado` }), true;
+      const result = await detectConflicts(projRows[0], prNumber);
+      return json(res, result.ok ? 200 : 502, result), true;
+    }
+    if (method === "GET" && path === "/ops/api/codereview/conflicts/status") {
+      const slug = url.searchParams.get("slug");
+      const prNumber = Number(url.searchParams.get("prNumber"));
+      if (!slug || !prNumber) return json(res, 400, { error: "Params 'slug' e 'prNumber' são obrigatórios" }), true;
+      const attempt = await getConflictAttempt(slug, prNumber);
+      return json(res, 200, { attempt }), true;
+    }
+    if (method === "POST" && path === "/ops/api/codereview/conflicts/resolve") {
+      const body = await readBody(req);
+      if (!body.slug || !body.prNumber) return json(res, 400, { error: "Campos 'slug' e 'prNumber' são obrigatórios" }), true;
+      const { rows: projRows } = await pg.query(
+        `select slug, display_name, local_path, git_provider, git_owner, git_repo, default_branch, codereview_model
+         from handoff_projects where slug = $1`,
+        [String(body.slug)]
+      );
+      if (!projRows.length) return json(res, 404, { error: `Projeto "${body.slug}" não encontrado` }), true;
+      // Resolução real (clone + merge + push) é longa — roda em background, painel acompanha
+      // via GET /ops/api/codereview/conflicts/status.
+      resolveConflicts({ project: projRows[0], prNumber: Number(body.prNumber), model: body.model ? String(body.model) : undefined })
+        .then((r) => console.log(`[ConflictResolver] PR #${body.prNumber} (${body.slug}):`, JSON.stringify(r).slice(0, 200)))
+        .catch((e) => console.error(`[ConflictResolver] PR #${body.prNumber} (${body.slug}) rejeitado:`, e.message));
+      return json(res, 202, { started: true, slug: body.slug, prNumber: Number(body.prNumber) }), true;
     }
     if (method === "GET" && path.match(/^\/ops\/api\/codereview\/[^/]+$/)) {
       const slug = path.substring("/ops/api/codereview/".length);
@@ -454,11 +524,16 @@ export async function handleOpsRequest(
       const task = await getAgentTask(id);
       if (!task) return json(res, 404, { error: "Task não encontrada" }), true;
       if (!task.pr_number) return json(res, 400, { error: "Task sem PR aberto" }), true;
-      const { rows: projRows } = await pg.query(`select git_owner, git_repo from handoff_projects where slug = $1`, [task.project_slug]);
+      await ensurePromotionColumn();
+      const { rows: projRows } = await pg.query(
+        `select display_name, git_owner, git_repo, default_branch, promote_to_branch from handoff_projects where slug = $1`,
+        [task.project_slug]
+      );
       if (!projRows.length || !projRows[0].git_owner || !projRows[0].git_repo) {
         return json(res, 404, { error: "Projeto sem git_owner/git_repo" }), true;
       }
-      const { git_owner: owner, git_repo: repo } = projRows[0];
+      const taskProject = projRows[0];
+      const { git_owner: owner, git_repo: repo } = taskProject;
       const token = await getGithubToken();
       if (!token) return json(res, 500, { error: "GITHUB_TOKEN não configurado" }), true;
       const taskPrCheck = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${task.pr_number}`, {
@@ -466,7 +541,8 @@ export async function handleOpsRequest(
       }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
       if (taskPrCheck?.merged) {
         await updateAgentTask(id, { status: "merged" });
-        return json(res, 200, { merged: true, sha: taskPrCheck.merge_commit_sha, alreadyMerged: true }), true;
+        const promotion = await ensurePromotionPr(taskProject);
+        return json(res, 200, { merged: true, sha: taskPrCheck.merge_commit_sha, alreadyMerged: true, promotion }), true;
       }
       const mergeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${task.pr_number}/merge`, {
         method: "PUT",
@@ -476,7 +552,8 @@ export async function handleOpsRequest(
       const mergeData = await mergeRes.json().catch(() => ({}));
       if (!mergeRes.ok) return json(res, 422, { error: mergeData.message || `GitHub HTTP ${mergeRes.status}` }), true;
       await updateAgentTask(id, { status: "merged" });
-      return json(res, 200, { merged: true, sha: mergeData.sha }), true;
+      const promotion = await ensurePromotionPr(taskProject);
+      return json(res, 200, { merged: true, sha: mergeData.sha, promotion }), true;
     }
     if (method === "POST" && path.match(/^\/ops\/api\/agent-tasks\/[^/]+\/reject$/)) {
       const id = path.split("/")[4];
@@ -569,7 +646,7 @@ export async function handleOpsRequest(
     if (method === "PATCH" && path.match(/^\/ops\/api\/projects\/[^/]+$/)) {
       const slug = path.substring("/ops/api/projects/".length);
       const b = await readBody(req);
-      const fields = ["display_name", "local_path", "git_provider", "git_owner", "git_repo", "default_branch", "codereview_schedule", "codereview_enabled", "codereview_auto"];
+      const fields = ["display_name", "local_path", "git_provider", "git_owner", "git_repo", "default_branch", "codereview_schedule", "codereview_enabled", "codereview_auto", "promote_to_branch"];
       const sets: string[] = [];
       const vals: unknown[] = [];
       for (const f of fields) {
@@ -604,6 +681,59 @@ export async function handleOpsRequest(
         [String(b.token || "")]
       );
       return json(res, 200, { ok: true }), true;
+    }
+
+    // ---- Provedores de modelos IA (NVIDIA NIM / OpenAI / Anthropic) ----
+    if (path === "/ops/api/settings/providers" && (method === "GET" || method === "PUT" || method === "DELETE")) {
+      const slug = url.searchParams.get("project") || undefined;
+      if (method === "GET") {
+        return json(res, 200, { secretsEnabled: secretsEnabled(), providers: await providerStatus(slug) }), true;
+      }
+      // Escrita exige master key (fail-closed) — sem ela não dá pra criptografar a api key.
+      if (!secretsEnabled()) {
+        return json(res, 503, { error: "AGENT_PROVIDER_MASTER_KEY não configurado no daemon — configuração de provedores desabilitada." }), true;
+      }
+      if (method === "DELETE") {
+        const pt = url.searchParams.get("providerType");
+        if (!pt) return json(res, 400, { error: "providerType obrigatório" }), true;
+        await pg.query(`delete from agent_providers where provider_type = $1 and project_slug is not distinct from $2`, [pt, slug || null]);
+        invalidateProviderCache();
+        return json(res, 200, { ok: true }), true;
+      }
+      // PUT — upsert
+      const b = await readBody(req);
+      const pt = String(b.providerType || "");
+      if (!["nim", "openai", "anthropic", "opencode"].includes(pt)) return json(res, 400, { error: "providerType inválido (nim|openai|anthropic|opencode)" }), true;
+      await pg.query(`create table if not exists agent_providers (
+        id bigserial primary key, provider_type text not null, project_slug text,
+        api_key_enc text, base_url text, model text, is_default boolean not null default false,
+        created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+        unique (provider_type, project_slug))`);
+      const apiKeyEnc = b.apiKey ? encryptSecret(String(b.apiKey)) : null;
+      // COALESCE preserva a key existente quando o painel salva sem reenviar o segredo (edição).
+      await pg.query(
+        `insert into agent_providers (provider_type, project_slug, api_key_enc, base_url, model, is_default, updated_at)
+         values ($1, $2, $3, $4, $5, $6, now())
+         on conflict (provider_type, project_slug) do update set
+           api_key_enc = coalesce($3, agent_providers.api_key_enc),
+           base_url = $4, model = $5, is_default = $6, updated_at = now()`,
+        [pt, slug || null, apiKeyEnc, b.baseUrl || null, b.model || null, !!b.isDefault]
+      );
+      // is_default é exclusivo por escopo (projeto ou global): zera os demais do mesmo escopo.
+      if (b.isDefault) {
+        await pg.query(
+          `update agent_providers set is_default = false where project_slug is not distinct from $1 and provider_type <> $2`,
+          [slug || null, pt]
+        );
+      }
+      invalidateProviderCache();
+      return json(res, 200, { ok: true }), true;
+    }
+    if (method === "POST" && path === "/ops/api/settings/providers/test") {
+      const b = await readBody(req);
+      const pt = String(b.providerType || "");
+      if (!["nim", "openai", "anthropic", "opencode"].includes(pt)) return json(res, 400, { error: "providerType inválido" }), true;
+      return json(res, 200, await testProvider(pt as ProviderType, b.project || undefined)), true;
     }
 
     json(res, 404, { error: "Rota não encontrada" });

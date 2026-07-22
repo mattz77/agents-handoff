@@ -6,8 +6,9 @@
 // teste/config por padrão (nunca mexe em código de produção sem CI_FIX_ALLOW_ANY=1).
 import { pg } from "../infra/postgres";
 import { getGithubToken } from "../infra/postgres";
-import { nimChat, extractJson } from "./nim-client";
+import { providerChat, extractJson } from "./provider-client";
 import { ciFixSkill } from "./skills";
+import { detectStackFacts, staticGuard } from "./agent-safety";
 import { ProjectRow } from "./git-collector";
 import { RECOMMENDED_MODELS } from "./skills";
 
@@ -234,9 +235,10 @@ export async function runCiFix(opts: {
     }
 
     // 5. Fix via modelo (mesma cadeia do fix-agent)
-    const raw = await nimChat(
+    const stackFacts = await detectStackFacts(gh, owner, repo, branch);
+    const raw = await providerChat(
       [
-        { role: "system", content: ciFixSkill(project.display_name) },
+        { role: "system", content: ciFixSkill(project.display_name, stackFacts.summary) },
         {
           role: "user",
           content: [
@@ -276,6 +278,8 @@ export async function runCiFix(opts: {
         out = out.slice(0, first) + e.replace + out.slice(first + e.search.length);
       }
       if (bad || out === target.content) continue;
+      const guard = staticGuard(target.path, out, stackFacts);
+      if (!guard.ok) continue; // bloqueado pela guarda de stack — não commita código que não compila
       await gh(`/repos/${owner}/${repo}/contents/${target.path}`, {
         method: "PUT",
         body: JSON.stringify({

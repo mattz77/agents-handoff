@@ -44,7 +44,7 @@ async function getKeys(forceRefresh = false): Promise<Jwk[]> {
   const fresh = jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS;
   if (jwksCache && fresh && !forceRefresh) return jwksCache.keys;
 
-  const res = await fetch(CERTS_URL);
+  const res = await fetch(CERTS_URL, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`Falha ao obter JWKS do Cloudflare: HTTP ${res.status}`);
   const body = (await res.json()) as { keys: Jwk[] };
   jwksCache = { keys: body.keys || [], fetchedAt: Date.now() };
