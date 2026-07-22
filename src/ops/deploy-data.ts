@@ -27,6 +27,7 @@ export interface DeployProjectRow {
   slug: string;
   display_name: string;
   local_path: string;
+  compose_dir: string | null;
   compose_service: string;
   vercel_deploy_hook_url: string | null;
   branches: string[];
@@ -45,9 +46,20 @@ async function ensureTables() {
   )`);
   await pg.query(`alter table deploy_projects add column if not exists branches jsonb not null default '[]'::jsonb`);
   await pg.query(`alter table deploy_projects add column if not exists branches_updated_at timestamptz`);
+  // compose_dir separado de local_path: nem todo projeto tem o docker-compose.yml na raiz
+  // do repo git (ex: Luma-APP — .git na raiz, mas compose fica em infra/proxy/). git roda
+  // em local_path, docker compose roda em compose_dir (default = local_path se não setado).
+  await pg.query(`alter table deploy_projects add column if not exists compose_dir text`);
   // Seed do próprio handoff-daemon — sempre existe, é o repo onde este worker roda.
   await pg.query(`insert into deploy_projects (slug, display_name, local_path, compose_service)
     values ('handoff-daemon', 'Handoff Daemon', '.', 'handoff-daemon')
+    on conflict (slug) do nothing`);
+  // Seed dos projetos self-hosted já conhecidos — mesmo repo (Luma-APP), serviços
+  // diferentes no mesmo infra/proxy/docker-compose.yml.
+  await pg.query(`insert into deploy_projects (slug, display_name, local_path, compose_dir, compose_service)
+    values
+      ('laje', 'Laje Streetware', 'C:\\Users\\olive\\Documents\\Luma-APP', 'C:\\Users\\olive\\Documents\\Luma-APP\\infra\\proxy', 'laje-web'),
+      ('luma', 'Luma App (web)', 'C:\\Users\\olive\\Documents\\Luma-APP', 'C:\\Users\\olive\\Documents\\Luma-APP\\infra\\proxy', 'luma-web')
     on conflict (slug) do nothing`);
 
   await pg.query(`create table if not exists deploy_requests (
@@ -74,14 +86,14 @@ export async function listDeployProjects(): Promise<DeployProjectRow[]> {
   return rows;
 }
 
-export async function upsertDeployProject(opts: { slug: string; displayName: string; localPath: string; composeService: string; vercelDeployHookUrl?: string }): Promise<DeployProjectRow> {
+export async function upsertDeployProject(opts: { slug: string; displayName: string; localPath: string; composeDir?: string; composeService: string; vercelDeployHookUrl?: string }): Promise<DeployProjectRow> {
   await ensureTables();
   const { rows } = await pg.query(
-    `insert into deploy_projects (slug, display_name, local_path, compose_service, vercel_deploy_hook_url)
-     values ($1, $2, $3, $4, $5)
-     on conflict (slug) do update set display_name = $2, local_path = $3, compose_service = $4, vercel_deploy_hook_url = $5
+    `insert into deploy_projects (slug, display_name, local_path, compose_dir, compose_service, vercel_deploy_hook_url)
+     values ($1, $2, $3, $4, $5, $6)
+     on conflict (slug) do update set display_name = $2, local_path = $3, compose_dir = $4, compose_service = $5, vercel_deploy_hook_url = $6
      returning *`,
-    [opts.slug, opts.displayName, opts.localPath, opts.composeService, opts.vercelDeployHookUrl || null]
+    [opts.slug, opts.displayName, opts.localPath, opts.composeDir || null, opts.composeService, opts.vercelDeployHookUrl || null]
   );
   return rows[0];
 }

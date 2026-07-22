@@ -25,7 +25,7 @@ function LogLine({ line }) {
 }
 
 function NewProjectForm({ onSaved, onCancel }) {
-  const [form, setForm] = React.useState({ slug: "", displayName: "", localPath: "", composeService: "", vercelDeployHookUrl: "" });
+  const [form, setForm] = React.useState({ slug: "", displayName: "", localPath: "", composeDir: "", composeService: "", vercelDeployHookUrl: "" });
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState("");
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -52,8 +52,9 @@ function NewProjectForm({ onSaved, onCancel }) {
         <input className="cb-input" placeholder="slug (ex: commit-briefing)" value={form.slug} onChange={set("slug")} style={{ width: 200 }} />
         <input className="cb-input" placeholder="nome de exibição" value={form.displayName} onChange={set("displayName")} style={{ width: 200 }} />
       </div>
-      <input className="cb-input" placeholder="local_path (ex: C:\\Users\\...\\commitBriefing-gh, ou caminho relativo a este repo)" value={form.localPath} onChange={set("localPath")} />
+      <input className="cb-input" placeholder="local_path — raiz do repo git (ex: C:\\Users\\...\\Luma-APP)" value={form.localPath} onChange={set("localPath")} />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input className="cb-input" placeholder="compose_dir (opcional — só se docker-compose.yml não fica na raiz, ex: infra/proxy)" value={form.composeDir} onChange={set("composeDir")} style={{ flex: 1 }} />
         <input className="cb-input" placeholder="compose_service (nome do serviço no docker-compose.yml)" value={form.composeService} onChange={set("composeService")} style={{ flex: 1 }} />
       </div>
       <input className="cb-input" placeholder="Vercel deploy hook URL (opcional, sobrepõe VERCEL_DEPLOY_HOOK_URL global)" value={form.vercelDeployHookUrl} onChange={set("vercelDeployHookUrl")} />
@@ -190,7 +191,9 @@ export function DeployPanel() {
 
           {currentProject && target === "self-hosted" && (
             <div className="muted mono" style={{ fontSize: 11 }}>
-              {currentProject.local_path} · serviço <code>{currentProject.compose_service}</code>
+              {currentProject.local_path}
+              {currentProject.compose_dir && currentProject.compose_dir !== currentProject.local_path && ` (compose em ${currentProject.compose_dir})`}
+              {" "}· serviço <code>{currentProject.compose_service}</code>
               {currentProject.branches_updated_at && ` · branches atualizados ${new Date(currentProject.branches_updated_at).toLocaleTimeString("pt-BR")}`}
               {!branchOptions.length && " · worker ainda não listou branches — aguarde ~20s ou confira se o worker está rodando"}
             </div>

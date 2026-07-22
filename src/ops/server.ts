@@ -752,6 +752,7 @@ export async function handleOpsRequest(
         slug,
         displayName: String(b.displayName || slug),
         localPath: String(b.localPath),
+        composeDir: b.composeDir ? String(b.composeDir) : undefined,
         composeService: String(b.composeService || slug),
         vercelDeployHookUrl: b.vercelDeployHookUrl ? String(b.vercelDeployHookUrl) : undefined,
       });

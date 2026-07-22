@@ -67,24 +67,28 @@ function resolveLocalPath(localPath) {
 async function runSelfHosted(row, project) {
   const { id, branch, action } = row;
   if (!BRANCH_RE.test(branch)) throw new Error(`branch inválida: ${branch}`);
-  const cwd = resolveLocalPath(project.local_path);
-  if (!fs.existsSync(cwd)) throw new Error(`local_path não existe no host: ${cwd}`);
+  const gitCwd = resolveLocalPath(project.local_path);
+  if (!fs.existsSync(gitCwd)) throw new Error(`local_path não existe no host: ${gitCwd}`);
+  // compose_dir separado: nem todo projeto tem o docker-compose.yml na raiz do repo git
+  // (ex: Luma-APP — .git na raiz, compose em infra/proxy/).
+  const composeCwd = resolveLocalPath(project.compose_dir || project.local_path);
+  if (!fs.existsSync(composeCwd)) throw new Error(`compose_dir não existe no host: ${composeCwd}`);
   const service = project.compose_service;
 
-  await runStreamed(id, "git", ["fetch", "origin"], { cwd });
+  await runStreamed(id, "git", ["fetch", "origin"], { cwd: gitCwd });
   try {
-    await runStreamed(id, "git", ["checkout", branch], { cwd });
+    await runStreamed(id, "git", ["checkout", branch], { cwd: gitCwd });
   } catch {
-    await runStreamed(id, "git", ["checkout", "-b", branch, `origin/${branch}`], { cwd });
+    await runStreamed(id, "git", ["checkout", "-b", branch, `origin/${branch}`], { cwd: gitCwd });
   }
-  await runStreamed(id, "git", ["pull", "origin", branch], { cwd });
+  await runStreamed(id, "git", ["pull", "origin", branch], { cwd: gitCwd });
 
   if (action === "rebuild") {
-    await runStreamed(id, "docker", ["compose", "build", service], { cwd });
+    await runStreamed(id, "docker", ["compose", "build", service], { cwd: composeCwd });
   } else if (action === "up") {
-    await runStreamed(id, "docker", ["compose", "up", "-d", service], { cwd });
+    await runStreamed(id, "docker", ["compose", "up", "-d", service], { cwd: composeCwd });
   } else {
-    await runStreamed(id, "docker", ["compose", "up", "-d", "--build", service], { cwd });
+    await runStreamed(id, "docker", ["compose", "up", "-d", "--build", service], { cwd: composeCwd });
   }
 }
 
