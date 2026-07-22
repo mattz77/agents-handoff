@@ -37,6 +37,7 @@ import { createAgentTask, listAgentTasks, getAgentTask, updateAgentTask, deleteA
 import { executeAgentTask } from "../hermes/task-agent";
 import { ensurePromotionColumn, ensurePromotionPr } from "./promotion";
 import { detectConflicts, resolveConflicts, getConflictAttempt } from "../hermes/conflict-agent";
+import { createDeployRequest, getDeployRequest, getLatestDeployRequest, listDeployRequests, DeployTarget, DeployAction } from "./deploy-data";
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   const s = JSON.stringify(body);
@@ -734,6 +735,63 @@ export async function handleOpsRequest(
       const pt = String(b.providerType || "");
       if (!["nim", "openai", "anthropic", "opencode"].includes(pt)) return json(res, 400, { error: "providerType inválido" }), true;
       return json(res, 200, await testProvider(pt as ProviderType, b.project || undefined)), true;
+    }
+
+    // Deploy — o daemon (dentro do próprio container que seria rebuildado) NUNCA executa
+    // docker/git aqui. Só grava o pedido; scripts/deploy-worker.js (solto no host, via Task
+    // Scheduler) faz o trabalho real e escreve o log de volta na mesma linha.
+    if (method === "POST" && path === "/ops/api/deploy/run") {
+      const b = await readBody(req);
+      const target: DeployTarget = b.target === "vercel" ? "vercel" : "self-hosted";
+      const action: DeployAction = ["rebuild", "up", "rebuild+up"].includes(b.action) ? b.action : "rebuild+up";
+      const branch = String(b.branch || "main").trim();
+      if (!/^[A-Za-z0-9._\/-]{1,100}$/.test(branch)) return json(res, 400, { error: "nome de branch inválido" }), true;
+      const row = await createDeployRequest({ target, action, branch });
+      return json(res, 200, { ok: true, id: row.id }), true;
+    }
+    if (method === "GET" && path === "/ops/api/deploy/history") {
+      return json(res, 200, { requests: await listDeployRequests(20) }), true;
+    }
+    if (method === "GET" && path === "/ops/api/deploy/latest") {
+      return json(res, 200, { request: await getLatestDeployRequest() }), true;
+    }
+    if (method === "GET" && path === "/ops/api/deploy/stream") {
+      const id = url.searchParams.get("id") || "";
+      const row0 = id ? await getDeployRequest(id) : await getLatestDeployRequest();
+      if (!row0) return json(res, 404, { error: "deploy request não encontrado" }), true;
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store",
+        Connection: "keep-alive",
+      });
+      let lastLogCount = 0;
+      let lastStatus = "";
+      const send = (event: string, data: unknown) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      const tick = async () => {
+        const row = await getDeployRequest(row0.id);
+        if (!row) return;
+        if (row.log.length > lastLogCount) {
+          for (const l of row.log.slice(lastLogCount)) send("log", l);
+          lastLogCount = row.log.length;
+        }
+        if (row.status !== lastStatus) {
+          lastStatus = row.status;
+          send("status", { status: row.status, error: row.error });
+        }
+        if (row.status === "done" || row.status === "failed") {
+          clearInterval(interval);
+          clearTimeout(cap);
+          res.end();
+        }
+      };
+      const interval = setInterval(() => { tick().catch(() => {}); }, 800);
+      // Cap de segurança — nunca deixa a conexão SSE aberta indefinidamente se o worker travar.
+      const cap = setTimeout(() => { clearInterval(interval); res.end(); }, 15 * 60 * 1000);
+      req.on("close", () => { clearInterval(interval); clearTimeout(cap); });
+      tick().catch(() => {});
+      return true;
     }
 
     json(res, 404, { error: "Rota não encontrada" });

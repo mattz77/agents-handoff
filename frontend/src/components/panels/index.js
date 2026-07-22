@@ -7,6 +7,7 @@ import { CodeReviewPanel } from './CodeReviewPanel.jsx';
 import { ProjectsPanel } from './ProjectsPanel.jsx';
 import { AgentTasksPanel } from './AgentTasksPanel.jsx';
 import { ModelsPanel } from './ModelsPanel.jsx';
+import { DeployPanel } from './DeployPanel.jsx';
 
 export const HDP = {
   OverviewPanel,
@@ -18,4 +19,5 @@ export const HDP = {
   ProjectsPanel,
   AgentTasksPanel,
   ModelsPanel,
+  DeployPanel,
 };

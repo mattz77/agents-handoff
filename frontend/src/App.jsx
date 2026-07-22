@@ -7,7 +7,7 @@ import { useTweaks, TweaksPanel, TweakSection, TweakRadio, TweakToggle, TweakCol
 const DS = window.CommitBriefingDesignSystem_27542e;
 const { Button } = DS;
 const { cls } = HDLib;
-const { OverviewPanel, HandoffsPanel, BrainPanel, InfraPanel, DataLakePanel, CodeReviewPanel, ProjectsPanel, AgentTasksPanel, ModelsPanel } = HDP;
+const { OverviewPanel, HandoffsPanel, BrainPanel, InfraPanel, DataLakePanel, CodeReviewPanel, ProjectsPanel, AgentTasksPanel, ModelsPanel, DeployPanel } = HDP;
 const { Inspector } = HDW;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -26,6 +26,7 @@ const NAV = [
   { id: 'codereview', label: 'Code Review', icon: 'shield' },
   { id: 'agents', label: 'Agentes', icon: 'brain' },
   { id: 'models', label: 'Modelos IA', icon: 'brain' },
+  { id: 'deploy', label: 'Deploy', icon: 'terminal' },
   { id: 'projects', label: 'Projetos', icon: 'folder' },
   { id: 'infra', label: 'Infra', icon: 'server' },
 ];
@@ -89,7 +90,7 @@ function Sidebar({ tab, setTab, open, onClose }) {
 }
 
 function Header({ tab, onRefresh, interval, setInterval_, onSearchToggle }) {
-  const titles = { overview: 'Visão geral', handoffs: 'Handoffs & filas', brain: 'LLM Brain', datalake: 'DataLake', codereview: 'Code Review', agents: 'Agentes', models: 'Modelos IA', projects: 'Projetos', infra: 'Infraestrutura' };
+  const titles = { overview: 'Visão geral', handoffs: 'Handoffs & filas', brain: 'LLM Brain', datalake: 'DataLake', codereview: 'Code Review', agents: 'Agentes', models: 'Modelos IA', deploy: 'Deploy', projects: 'Projetos', infra: 'Infraestrutura' };
   const subs = {
     overview: 'Orquestração de handoff entre agentes (em tempo real)',
     handoffs: 'Auditoria, dead-letter queue, outbox e circuit breakers',
@@ -98,6 +99,7 @@ function Header({ tab, onRefresh, interval, setInterval_, onSearchToggle }) {
     codereview: 'Revisão diária, riscos mitigados e integridade',
     agents: 'Delegue tasks a agentes — kanban, branch isolada e PR pra revisão',
     models: 'Provedores de IA: NVIDIA NIM, OpenAI, Anthropic — API keys e default',
+    deploy: 'Rebuild e deploy do daemon — self-hosted ou Vercel, log em tempo real',
     projects: 'Gerenciamento de repositórios e projetos ativos',
     infra: 'Containers, Redis HA e saúde do sistema',
   };
@@ -367,8 +369,9 @@ function App() {
           : tab === 'codereview' ? <CodeReviewPanel />
             : tab === 'agents' ? <AgentTasksPanel />
               : tab === 'models' ? <ModelsPanel />
-                : tab === 'projects' ? <ProjectsPanel />
-                  : <InfraPanel />;
+                : tab === 'deploy' ? <DeployPanel />
+                  : tab === 'projects' ? <ProjectsPanel />
+                    : <InfraPanel />;
 
   if (!hdReady) {
     return (
