@@ -163,6 +163,9 @@ export async function handleOpsRequest(
     const n = (key: string, def: number) => Number(url.searchParams.get(key)) || def;
     const status = url.searchParams.get("status") || undefined;
 
+    if (method === "GET" && path === "/ops/api/ping") {
+      return json(res, 200, { pong: true, ts: new Date().toISOString() }), true;
+    }
     if (method === "GET" && path === "/ops/api/overview") {
       return json(res, 200, await getOverview()), true;
     }
