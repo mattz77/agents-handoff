@@ -1,9 +1,9 @@
 import http from "node:http";
 import { redis } from "../infra/redis";
 import fs from "node:fs";
+import { join, extname } from "node:path";
 
 const pkg = JSON.parse(fs.readFileSync(join(process.cwd(), "package.json"), "utf8"));
-import { join, extname } from "node:path";
 import { pg, getGithubToken } from "../infra/postgres";
 import {
   getOverview,
