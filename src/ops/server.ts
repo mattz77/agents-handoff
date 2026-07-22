@@ -37,7 +37,7 @@ import { createAgentTask, listAgentTasks, getAgentTask, updateAgentTask, deleteA
 import { executeAgentTask } from "../hermes/task-agent";
 import { ensurePromotionColumn, ensurePromotionPr } from "./promotion";
 import { detectConflicts, resolveConflicts, getConflictAttempt } from "../hermes/conflict-agent";
-import { createDeployRequest, getDeployRequest, getLatestDeployRequest, listDeployRequests, DeployTarget, DeployAction } from "./deploy-data";
+import { createDeployRequest, getDeployRequest, getLatestDeployRequest, listDeployRequests, listDeployProjects, upsertDeployProject, deleteDeployProject, DeployTarget, DeployAction } from "./deploy-data";
 
 function json(res: http.ServerResponse, code: number, body: unknown) {
   const s = JSON.stringify(body);
@@ -740,13 +740,41 @@ export async function handleOpsRequest(
     // Deploy — o daemon (dentro do próprio container que seria rebuildado) NUNCA executa
     // docker/git aqui. Só grava o pedido; scripts/deploy-worker.js (solto no host, via Task
     // Scheduler) faz o trabalho real e escreve o log de volta na mesma linha.
+    if (method === "GET" && path === "/ops/api/deploy/projects") {
+      return json(res, 200, { projects: await listDeployProjects() }), true;
+    }
+    if (method === "POST" && path === "/ops/api/deploy/projects") {
+      const b = await readBody(req);
+      const slug = String(b.slug || "").trim();
+      if (!/^[a-z0-9-]{1,60}$/.test(slug)) return json(res, 400, { error: "slug inválido (use a-z, 0-9, hífen)" }), true;
+      if (!b.localPath) return json(res, 400, { error: "localPath é obrigatório" }), true;
+      const row = await upsertDeployProject({
+        slug,
+        displayName: String(b.displayName || slug),
+        localPath: String(b.localPath),
+        composeService: String(b.composeService || slug),
+        vercelDeployHookUrl: b.vercelDeployHookUrl ? String(b.vercelDeployHookUrl) : undefined,
+      });
+      return json(res, 200, { ok: true, project: row }), true;
+    }
+    if (method === "DELETE" && path === "/ops/api/deploy/projects") {
+      const slug = url.searchParams.get("slug") || "";
+      try {
+        await deleteDeployProject(slug);
+        return json(res, 200, { ok: true }), true;
+      } catch (e) {
+        return json(res, 400, { error: (e as Error).message }), true;
+      }
+    }
     if (method === "POST" && path === "/ops/api/deploy/run") {
       const b = await readBody(req);
+      const projectSlug = String(b.projectSlug || "handoff-daemon").trim();
       const target: DeployTarget = b.target === "vercel" ? "vercel" : "self-hosted";
       const action: DeployAction = ["rebuild", "up", "rebuild+up"].includes(b.action) ? b.action : "rebuild+up";
       const branch = String(b.branch || "main").trim();
       if (!/^[A-Za-z0-9._\/-]{1,100}$/.test(branch)) return json(res, 400, { error: "nome de branch inválido" }), true;
-      const row = await createDeployRequest({ target, action, branch });
+      if (!/^[a-z0-9-]{1,60}$/.test(projectSlug)) return json(res, 400, { error: "projectSlug inválido" }), true;
+      const row = await createDeployRequest({ projectSlug, target, action, branch });
       return json(res, 200, { ok: true, id: row.id }), true;
     }
     if (method === "GET" && path === "/ops/api/deploy/history") {

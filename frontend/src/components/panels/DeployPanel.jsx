@@ -24,7 +24,52 @@ function LogLine({ line }) {
   );
 }
 
+function NewProjectForm({ onSaved, onCancel }) {
+  const [form, setForm] = React.useState({ slug: "", displayName: "", localPath: "", composeService: "", vercelDeployHookUrl: "" });
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const save = () => {
+    if (!form.slug || !form.localPath) { setErr("slug e localPath são obrigatórios"); return; }
+    setBusy(true); setErr("");
+    fetch("/ops/api/deploy/projects", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(form),
+    })
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        setBusy(false);
+        if (!r.ok || d.error) { setErr(d.error || `HTTP ${r.status}`); return; }
+        onSaved();
+      })
+      .catch((e) => { setBusy(false); setErr(String(e)); });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input className="cb-input" placeholder="slug (ex: commit-briefing)" value={form.slug} onChange={set("slug")} style={{ width: 200 }} />
+        <input className="cb-input" placeholder="nome de exibição" value={form.displayName} onChange={set("displayName")} style={{ width: 200 }} />
+      </div>
+      <input className="cb-input" placeholder="local_path (ex: C:\\Users\\...\\commitBriefing-gh, ou caminho relativo a este repo)" value={form.localPath} onChange={set("localPath")} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input className="cb-input" placeholder="compose_service (nome do serviço no docker-compose.yml)" value={form.composeService} onChange={set("composeService")} style={{ flex: 1 }} />
+      </div>
+      <input className="cb-input" placeholder="Vercel deploy hook URL (opcional, sobrepõe VERCEL_DEPLOY_HOOK_URL global)" value={form.vercelDeployHookUrl} onChange={set("vercelDeployHookUrl")} />
+      {err && <div style={{ color: "var(--critical)", fontSize: 12 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 8 }}>
+        <Button size="sm" disabled={busy} onClick={save}>{busy ? "Salvando…" : "Salvar projeto"}</Button>
+        <Button size="sm" variant="outline" onClick={onCancel}>Cancelar</Button>
+      </div>
+    </div>
+  );
+}
+
 export function DeployPanel() {
+  const [projects, setProjects] = React.useState([]);
+  const [projectSlug, setProjectSlug] = React.useState("handoff-daemon");
+  const [showNewProject, setShowNewProject] = React.useState(false);
   const [branch, setBranch] = React.useState("main");
   const [target, setTarget] = React.useState("self-hosted");
   const [busyAction, setBusyAction] = React.useState(null);
@@ -33,11 +78,19 @@ export function DeployPanel() {
   const esRef = React.useRef(null);
   const logEndRef = React.useRef(null);
 
+  const loadProjects = React.useCallback(() => {
+    fetch("/ops/api/deploy/projects").then(r => r.json()).then(d => {
+      const list = d.projects || [];
+      setProjects(list);
+      if (list.length && !list.some(p => p.slug === projectSlug)) setProjectSlug(list[0].slug);
+    }).catch(() => {});
+  }, [projectSlug]);
+
   const loadHistory = React.useCallback(() => {
     fetch("/ops/api/deploy/history").then(r => r.json()).then(d => setHistory(d.requests || [])).catch(() => {});
   }, []);
 
-  React.useEffect(() => { loadHistory(); }, [loadHistory]);
+  React.useEffect(() => { loadProjects(); loadHistory(); }, []);
 
   React.useEffect(() => {
     if (current && current.log && current.log.length) {
@@ -72,7 +125,7 @@ export function DeployPanel() {
     setBusyAction(action);
     fetch("/ops/api/deploy/run", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target, action, branch }),
+      body: JSON.stringify({ projectSlug, target, action, branch }),
     })
       .then(async (r) => {
         const d = await r.json().catch(() => ({}));
@@ -84,6 +137,7 @@ export function DeployPanel() {
 
   const anyBusy = !!busyAction;
   const running = current && (current.status === "pending" || current.status === "running");
+  const currentProject = projects.find(p => p.slug === projectSlug);
 
   return (
     <div className="panel animate-fade-up stagger">
@@ -91,17 +145,36 @@ export function DeployPanel() {
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--muted-foreground)" }}>
+              Projeto
+              <select className="cb-input" value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} style={{ width: 220 }}>
+                {projects.map(p => <option key={p.slug} value={p.slug}>{p.display_name}</option>)}
+              </select>
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--muted-foreground)" }}>
               Branch
-              <input className="cb-input" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" style={{ width: 200 }} />
+              <input className="cb-input" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" style={{ width: 180 }} />
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--muted-foreground)" }}>
               Destino
-              <select className="cb-input" value={target} onChange={(e) => setTarget(e.target.value)} style={{ width: 200 }}>
+              <select className="cb-input" value={target} onChange={(e) => setTarget(e.target.value)} style={{ width: 180 }}>
                 <option value="self-hosted">Self-hosted (Docker)</option>
                 <option value="vercel">Vercel</option>
               </select>
             </label>
+            <Button size="sm" variant="outline" onClick={() => setShowNewProject(v => !v)}>
+              {showNewProject ? "Fechar" : "+ Projeto"}
+            </Button>
           </div>
+
+          {currentProject && target === "self-hosted" && (
+            <div className="muted mono" style={{ fontSize: 11 }}>
+              {currentProject.local_path} · serviço <code>{currentProject.compose_service}</code>
+            </div>
+          )}
+
+          {showNewProject && (
+            <NewProjectForm onCancel={() => setShowNewProject(false)} onSaved={() => { setShowNewProject(false); loadProjects(); }} />
+          )}
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {ACTIONS.map((a) => (
@@ -119,7 +192,7 @@ export function DeployPanel() {
 
           {target === "vercel" && (
             <div className="muted" style={{ fontSize: 12 }}>
-              Requer <code>VERCEL_DEPLOY_HOOK_URL</code> no .env do host — sem isso o worker reporta erro no log abaixo.
+              Requer <code>vercel_deploy_hook_url</code> no projeto ou <code>VERCEL_DEPLOY_HOOK_URL</code> global no .env — sem isso o worker reporta erro no log abaixo.
             </div>
           )}
 
@@ -150,6 +223,7 @@ export function DeployPanel() {
               <StatusBadge status={r.status === "done" ? "good" : r.status === "failed" ? "critical" : r.status === "running" ? "info" : "warning"}>
                 {r.status}
               </StatusBadge>
+              <span className="mono" style={{ fontSize: 12 }}>{r.project_slug}</span>
               <span className="mono" style={{ fontSize: 12 }}>{r.target}</span>
               <span className="mono" style={{ fontSize: 12 }}>{r.action}</span>
               <span className="mono" style={{ fontSize: 12 }}>{r.branch}</span>
