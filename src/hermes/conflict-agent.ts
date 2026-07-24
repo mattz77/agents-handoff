@@ -181,10 +181,9 @@ export async function resolveConflicts(opts: {
   model?: string;
 }): Promise<ConflictResolveResult> {
   const { project, prNumber } = opts;
-  // Fixado em glm-5.2 por decisão do usuário — resolve hunk de conflito rápido (medido: ~75s
-  // vs ~6min do qwen3.5-397b nas tasks do TaskAgent) sem perder qualidade na tarefa, que é
-  // pequena e localizada (só o trecho em conflito, não o arquivo inteiro).
-  const model = "z-ai/glm-5.2";
+  // Default glm-5.2 — medido: ~75s vs ~6min do qwen3.5-397b nas tasks do TaskAgent, sem perder
+  // qualidade na tarefa (pequena e localizada, só o trecho em conflito). Painel permite trocar.
+  const model = opts.model || "z-ai/glm-5.2";
   await ensureConflictTable();
 
   const { rows } = await pg.query(

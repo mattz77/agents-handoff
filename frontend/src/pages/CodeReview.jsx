@@ -568,6 +568,12 @@ function ReportsTab() {
 function ConflictDrawer({ open, slug, prNumber, onClose }) {
   const queryClient = useQueryClient();
   const [attempt, setAttempt] = React.useState(null);
+  const [showModels, setShowModels] = React.useState(false);
+  const [model, setModel] = useModelSel('cr.model.conflict');
+  const modelsQ = useQuery({ queryKey: ['codereview-models'], queryFn: api.codereviewModels, enabled: open });
+  const models = modelsQ.data?.models || [];
+  const recommended = (modelsQ.data?.recommended?.fix || []).filter((m) => models.includes(m));
+
   const q = useQuery({
     queryKey: ['conflicts', slug, prNumber],
     queryFn: () => api.conflicts(slug, prNumber),
@@ -577,7 +583,7 @@ function ConflictDrawer({ open, slug, prNumber, onClose }) {
   const running = attempt?.status === 'running';
 
   const resolve = useMutation({
-    mutationFn: () => api.resolveConflict({ slug, prNumber }),
+    mutationFn: () => api.resolveConflict({ slug, prNumber, ...(model ? { model } : {}) }),
     onSuccess: () => { setAttempt({ status: 'running', current_step: 'iniciando…' }); toast.info('Resolução iniciada'); },
     onError: (e) => toast.error(`Falha: ${e.message}`),
   });
@@ -622,9 +628,33 @@ function ConflictDrawer({ open, slug, prNumber, onClose }) {
               </div>
             )}
             {attempt?.error && <p className="data text-[11px] text-bad mt-1">{attempt.error}</p>}
-            <Button variant="primary" size="sm" className="mt-4" loading={resolve.isPending} disabled={running} onClick={() => resolve.mutate()}>
-              <RefreshCcw size={13} /> {running ? 'Resolvendo…' : 'Corrigir conflitos automaticamente'}
-            </Button>
+            <div className="flex items-center gap-2 mt-4 flex-wrap">
+              <Button variant="primary" size="sm" loading={resolve.isPending} disabled={running} onClick={() => resolve.mutate()}>
+                <RefreshCcw size={13} /> {running ? 'Resolvendo…' : 'Corrigir conflitos automaticamente'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowModels((v) => !v)} className={showModels ? 'text-accent' : ''}>
+                <Sliders size={13} /> Modelo
+              </Button>
+            </div>
+            {showModels && models.length > 0 && (
+              <label className="flex flex-col gap-1 mt-2 max-w-[280px]">
+                <span className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">▲ Modelo de correção</span>
+                <select
+                  value={model} onChange={(e) => setModel(e.target.value)}
+                  className="h-8 px-2.5 rounded-lg border border-line bg-overlay text-[12px] data text-fg outline-none focus:border-accent-line cursor-pointer"
+                >
+                  <option value="">padrão (z-ai/glm-5.2)</option>
+                  {recommended.length > 0 && (
+                    <optgroup label="Indicados">
+                      {recommended.map((m) => <option key={`r-${m}`} value={m}>{m}</option>)}
+                    </optgroup>
+                  )}
+                  <optgroup label="Todos">
+                    {models.map((m) => <option key={`a-${m}`} value={m}>{m}</option>)}
+                  </optgroup>
+                </select>
+              </label>
+            )}
           </>
         )}
     </Drawer>
