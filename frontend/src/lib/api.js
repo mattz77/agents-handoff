@@ -46,6 +46,7 @@ export const api = {
   deleteAgentTask: (id) => req(`/agent-tasks/${id}`, { method: 'DELETE' }),
   providers: () => req('/settings/providers'),
   saveProvider: (data) => req('/settings/providers', { method: 'PUT', body: JSON.stringify(data) }),
+  deleteProvider: (providerType) => req(`/settings/providers?providerType=${encodeURIComponent(providerType)}`, { method: 'DELETE' }),
   testProvider: (providerType) => req('/settings/providers/test', { method: 'POST', body: JSON.stringify({ providerType }) }),
 
   // Govern
@@ -75,6 +76,7 @@ export const api = {
 
   // Deploy
   deployProjects: () => req('/deploy/projects'),
+  createDeployProject: (p) => req('/deploy/projects', { method: 'POST', body: JSON.stringify(p) }),
   deployHistory: () => req('/deploy/history'),
   deployLatest: () => req('/deploy/latest'),
   runDeploy: (payload) => req('/deploy/run', { method: 'POST', body: JSON.stringify(payload) }),

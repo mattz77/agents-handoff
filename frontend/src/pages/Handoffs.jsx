@@ -145,17 +145,21 @@ function BreakersTab() {
     <QueryState query={q} skeleton={<div className="skeleton h-40" />}>
       {items.length === 0 ? <EmptyState icon={ShieldAlert} title="Nenhum breaker" hint="Circuit breakers aparecem quando configurados." /> : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {items.map((b) => (
-            <Spotlight key={b.key} className="card p-4">
-              <div className="flex items-center justify-between gap-2">
-                <span className="data text-[12px] text-muted truncate">{b.key}</span>
-                <StatusBadge status={b.state} />
-              </div>
-              {b.failures != null && (
-                <p className="data tnum text-[11px] text-faint mt-2">{b.failures} falhas consecutivas</p>
-              )}
-            </Spotlight>
-          ))}
+          {items.map((b) => {
+            const fails = b.fails ?? b.failures;
+            return (
+              <Spotlight key={b.key} className="card p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="data text-[12px] text-muted truncate">{b.key}</span>
+                  <StatusBadge status={b.state} />
+                </div>
+                <div className="flex items-center gap-3 mt-2 data text-[11px] text-faint">
+                  {fails != null && <span>{fails} falhas</span>}
+                  {b.openedAt && <span>aberto {fmtRelative(b.openedAt)}</span>}
+                </div>
+              </Spotlight>
+            );
+          })}
         </div>
       )}
     </QueryState>
