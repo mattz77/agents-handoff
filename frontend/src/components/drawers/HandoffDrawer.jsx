@@ -14,6 +14,12 @@ export function HandoffDrawer({ id, onClose }) {
     enabled: !!id,
   });
   const h = q.data || {};
+  const hermesQ = useQuery({
+    queryKey: ['hermes', h.correlation_id],
+    queryFn: () => api.hermes(h.correlation_id),
+    enabled: !!h.correlation_id,
+  });
+  const hermesSteps = Array.isArray(hermesQ.data) ? hermesQ.data : (hermesQ.data?.items || hermesQ.data?.audits || []);
 
   return (
     <Drawer
@@ -45,6 +51,20 @@ export function HandoffDrawer({ id, onClose }) {
               <div className="flex items-center gap-3 data text-[12px] text-muted">
                 {h.hermes_severidade && <span>severidade: <b className="text-fg">{h.hermes_severidade}</b></span>}
                 {h.hermes_nota != null && <span>nota: <b className="text-fg">{h.hermes_nota}</b></span>}
+              </div>
+            </div>
+          )}
+          {h.correlation_id && hermesSteps.length > 0 && (
+            <div className="mt-4">
+              <p className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-1.5">Agents Hermes</p>
+              <div className="flex flex-col gap-1.5">
+                {hermesSteps.map((s, i) => (
+                  <div key={s.id || i} className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-subtle/60 border border-line data text-[11.5px]">
+                    <StatusBadge status={s.status} />
+                    <span className="text-muted truncate">{s.name || s.agent || s.step || '—'}</span>
+                    {s.updated_at && <span className="text-faint ml-auto flex-none">{fmtDateTime(s.updated_at)}</span>}
+                  </div>
+                ))}
               </div>
             </div>
           )}

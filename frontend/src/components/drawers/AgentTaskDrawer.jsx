@@ -1,7 +1,7 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { RotateCcw, Trash2, ExternalLink } from 'lucide-react';
+import { RotateCcw, Trash2, ExternalLink, Check, X as XIcon } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Drawer, KV, JsonBlock } from '../ui/drawer.jsx';
 import { StatusBadge } from '../ui/badge.jsx';
@@ -20,6 +20,7 @@ export function AgentTaskDrawer({ task, onClose }) {
   });
   const t = q.data || task || {};
   const canRetry = ['failed', 'rejected'].includes((t.status || '').toLowerCase());
+  const canReview = !!t.pr_number && !['merged', 'rejected'].includes((t.status || '').toLowerCase());
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
@@ -35,6 +36,19 @@ export function AgentTaskDrawer({ task, onClose }) {
     onSuccess: () => { toast.success('Task removida'); invalidate(); onClose(); },
     onError: (e) => toast.error(`Delete falhou: ${e.message}`),
   });
+  const approve = useMutation({
+    mutationFn: () => api.approveAgentTask(id),
+    onSuccess: (d) => {
+      toast.success(d?.promotion?.prUrl ? 'PR mergeado — promoção aberta' : 'PR mergeado');
+      invalidate(); onClose();
+    },
+    onError: (e) => toast.error(`Approve falhou: ${e.message}`),
+  });
+  const reject = useMutation({
+    mutationFn: () => api.rejectAgentTask(id),
+    onSuccess: () => { toast.success('PR fechado e task rejeitada'); invalidate(); onClose(); },
+    onError: (e) => toast.error(`Reject falhou: ${e.message}`),
+  });
 
   return (
     <Drawer
@@ -49,6 +63,16 @@ export function AgentTaskDrawer({ task, onClose }) {
       ) : (
         <>
           <div className="flex flex-wrap gap-2 mb-4">
+            {canReview && (
+              <>
+                <Button size="sm" variant="soft" loading={approve.isPending} onClick={() => approve.mutate()}>
+                  <Check size={13} /> Approve (merge)
+                </Button>
+                <Button size="sm" variant="danger" loading={reject.isPending} onClick={() => reject.mutate()}>
+                  <XIcon size={13} /> Reject
+                </Button>
+              </>
+            )}
             {canRetry && (
               <Button size="sm" variant="soft" loading={retry.isPending} onClick={() => retry.mutate()}>
                 <RotateCcw size={13} /> Reexecutar

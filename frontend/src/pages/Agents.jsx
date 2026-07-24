@@ -57,20 +57,28 @@ function CreateTaskModal({ open, onClose }) {
   const queryClient = useQueryClient();
   const [title, setTitle] = React.useState('');
   const [description, setDescription] = React.useState('');
-  const [agent, setAgent] = React.useState('');
+  const [projectSlug, setProjectSlug] = React.useState('');
+  const [engine, setEngine] = React.useState('nim');
+  const [model, setModel] = React.useState('');
+
+  const projectsQ = useQuery({ queryKey: ['projects'], queryFn: api.projects, enabled: open });
+  const modelsQ = useQuery({ queryKey: ['codereview-models'], queryFn: api.codereviewModels, enabled: open });
+  const projects = projectsQ.data?.projects || [];
+  const models = modelsQ.data?.models || [];
 
   const create = useMutation({
     mutationFn: api.createAgentTask,
     onSuccess: () => {
       toast.success('Task delegada — agente vai criar branch isolada');
       queryClient.invalidateQueries({ queryKey: ['agent-tasks'] });
-      setTitle(''); setDescription(''); setAgent('');
+      setTitle(''); setDescription(''); setProjectSlug(''); setModel('');
       onClose();
     },
     onError: (e) => toast.error(`Falha ao delegar: ${e.message}`),
   });
 
   if (!open) return null;
+  const canSubmit = title.trim() && description.trim() && projectSlug;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/55 backdrop-blur-[3px]" onClick={onClose} />
@@ -90,16 +98,39 @@ function CreateTaskModal({ open, onClose }) {
             placeholder="Contexto, arquivos envolvidos, resultado esperado…" rows={4}
             className="px-3 py-2.5 rounded-lg border border-line bg-overlay text-[13px] text-fg placeholder:text-faint outline-none focus:border-accent-line resize-none"
           />
-          <input
-            value={agent} onChange={(e) => setAgent(e.target.value)}
-            placeholder="Agente (opcional — ex: claude, gemini, zcode)"
-            className="h-9 px-3 rounded-lg border border-line bg-overlay text-[13px] data text-fg placeholder:text-faint outline-none focus:border-accent-line"
-          />
+          <select
+            value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)}
+            className="h-9 px-3 rounded-lg border border-line bg-overlay text-[13px] text-fg outline-none focus:border-accent-line cursor-pointer"
+          >
+            <option value="">Projeto (obrigatório)…</option>
+            {projects.map((p) => <option key={p.slug} value={p.slug}>{p.display_name || p.slug}</option>)}
+          </select>
+          <div className="flex gap-2">
+            <select
+              value={engine} onChange={(e) => setEngine(e.target.value)}
+              className="h-9 px-3 rounded-lg border border-line bg-overlay text-[13px] data text-fg outline-none focus:border-accent-line cursor-pointer"
+            >
+              <option value="nim">nim</option>
+            </select>
+            <select
+              value={model} onChange={(e) => setModel(e.target.value)}
+              className="flex-1 min-w-0 h-9 px-3 rounded-lg border border-line bg-overlay text-[13px] data text-fg outline-none focus:border-accent-line cursor-pointer"
+            >
+              <option value="">Modelo (default do projeto)…</option>
+              {models.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
           <div className="flex justify-end gap-2 mt-1">
             <Button variant="ghost" onClick={onClose}>Cancelar</Button>
             <Button
-              variant="primary" loading={create.isPending} disabled={!title.trim()}
-              onClick={() => create.mutate({ title: title.trim(), description: description.trim(), agent: agent.trim() || undefined })}
+              variant="primary" loading={create.isPending} disabled={!canSubmit}
+              onClick={() => create.mutate({
+                title: title.trim(),
+                description: description.trim(),
+                project_slug: projectSlug,
+                engine,
+                model: model || undefined,
+              })}
             >
               Delegar task
             </Button>

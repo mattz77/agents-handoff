@@ -34,7 +34,10 @@ function LiveLog({ deployId, onDone }) {
       }
       setLines((cur) => [...cur.slice(-500), e.data]);
     };
-    es.onerror = () => { setClosed(true); es.close(); onDone?.(); };
+    // EventSource reconecta sozinho em blip de rede — só fecha de fato no readyState CLOSED
+    // (ex: servidor derrubou a conexão de vez). Fechar em todo onerror matava o log ao vivo
+    // de deploys longos no primeiro soluço de rede.
+    es.onerror = () => { if (es.readyState === EventSource.CLOSED) { setClosed(true); onDone?.(); } };
     return () => es.close();
   }, [deployId]);
 

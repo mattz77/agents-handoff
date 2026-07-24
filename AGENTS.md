@@ -6,6 +6,7 @@
 - **Database**: PostgreSQL (outbox pattern)
 - **Infra**: Docker Compose (Redis Master/Sentinel, Cloudflared, Traefik)
 - **Build**: `tsc` → `dist/`
+- **Frontend** (`frontend/`, branch `redesign-kimik3`): React 19 + Vite 8 + Tailwind v4 (CSS-first, sem config js) + framer-motion + cmdk + sonner + @number-flow/react + recharts + zustand (persist) + react-query. Data via `src/lib/api.js` (REST `/ops/api/*`) — **nunca** reintroduzir `window.HD`/`data-real.js`. Doc completa: `LLM-Brain/docs/REDESIGN-OPS-PANEL.md`.
 
 ## Arquitetura
 - `src/producer.ts` — Publica HandoffEnvelope no Redis Stream com dedupe atômica

@@ -87,7 +87,7 @@ export default function Models() {
   });
 
   const save = useMutation({
-    mutationFn: api.saveProviders,
+    mutationFn: api.saveProvider,
     onSuccess: () => {
       toast.success('Default atualizado');
       queryClient.invalidateQueries({ queryKey: ['providers'] });
@@ -117,7 +117,7 @@ export default function Models() {
               testing={testing === p.provider}
               testResult={results[p.provider]}
               onTest={() => test.mutate(p.provider)}
-              onSetDefault={() => save.mutate({ default: p.provider })}
+              onSetDefault={() => save.mutate({ providerType: p.provider, isDefault: true, model: p.model, baseUrl: p.base_url })}
             />
           ))}
         </div>

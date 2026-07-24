@@ -1,9 +1,11 @@
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Container, Database, GitBranch, Cpu, MemoryStick, Clock, GitCommit } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { Container, Database, GitBranch, Cpu, MemoryStick, Clock, GitCommit, KeyRound } from 'lucide-react';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
 import { Badge } from '../components/ui/badge.jsx';
+import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, EmptyState, Spotlight } from '../components/ui/misc.jsx';
 import { fmtRelative } from '../lib/format';
 
@@ -148,6 +150,54 @@ function GitCard() {
   );
 }
 
+function GithubTokenCard() {
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ['github-token'], queryFn: api.githubToken });
+  const [token, setToken] = React.useState('');
+  const d = q.data || {};
+
+  const save = useMutation({
+    mutationFn: () => api.saveGithubToken(token),
+    onSuccess: () => {
+      toast.success('Token salvo');
+      setToken('');
+      queryClient.invalidateQueries({ queryKey: ['github-token'] });
+    },
+    onError: (e) => toast.error(`Falha ao salvar: ${e.message}`),
+  });
+
+  return (
+    <Spotlight className="card p-5">
+      <SectionHeader
+        title="GitHub PAT"
+        sub="token usado pra diffs, comentários e merge de PR"
+        actions={
+          d.configured ? (
+            <Badge tone="ok" dot={false}>configurado ({d.source})</Badge>
+          ) : (
+            <Badge tone="warn" dot={false}>não configurado</Badge>
+          )
+        }
+      />
+      <QueryState query={q} skeleton={<div className="skeleton h-16" />}>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 h-9 px-3 rounded-lg border border-line bg-overlay flex-1 focus-within:border-accent-line transition-colors">
+            <KeyRound size={13.5} className="text-faint flex-none" />
+            <input
+              type="password" value={token} onChange={(e) => setToken(e.target.value)}
+              placeholder={d.configured ? 'Substituir token existente…' : 'ghp_…'}
+              className="flex-1 bg-transparent outline-none text-[13px] data text-fg placeholder:text-faint"
+            />
+          </div>
+          <Button variant="primary" size="md" loading={save.isPending} disabled={!token.trim()} onClick={() => save.mutate()}>
+            Salvar
+          </Button>
+        </div>
+      </QueryState>
+    </Spotlight>
+  );
+}
+
 export default function Infra() {
   return (
     <div>
@@ -157,6 +207,7 @@ export default function Infra() {
         <RedisCard />
         <SystemCard />
         <GitCard />
+        <GithubTokenCard />
       </div>
     </div>
   );
