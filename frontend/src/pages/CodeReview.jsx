@@ -321,7 +321,10 @@ function ReportsTab() {
       return api.runCodereview({ ...(projectFilter ? { slug: projectFilter } : {}), ...(reviewModel ? { model: reviewModel } : {}) });
     },
     onSuccess: (r) => {
-      if (r?.ok === false) toast.error(r.error || 'Review falhou');
+      // Resposta de "Todos" (POST sem slug) não tem {ok}, tem {triggered, results} — trata como
+      // sucesso genérico. Resposta de projeto único carrega ok/alreadyReviewed/error.
+      if (r && r.ok === false) toast.error(r.error || 'Review falhou');
+      else if (r && r.alreadyReviewed) toast.info('Sem commit novo desde o último review — nada a fazer');
       else toast.success('Review concluído');
       queryClient.invalidateQueries({ queryKey: ['codereview'] });
       runStatusQ.refetch();
@@ -645,7 +648,7 @@ function PrRow({ pr, slug, onOpenConflict, onMerged }) {
         <a href={pr.url} target="_blank" rel="noreferrer" className="text-[12.5px] font-medium text-fg truncate hover:text-accent block">#{pr.number} · {pr.title || 'sem título'}</a>
         <p className="data text-[10.5px] text-faint mt-0.5 truncate">{[pr.head, pr.base && `→ ${pr.base}`, pr.author].filter(Boolean).join(' ')}</p>
       </div>
-      {pr.draft && <Badge tone="info" dot={false}>draft</Badge>}
+      {pr.draft ? <Badge tone="neutral" dot={false}>draft</Badge> : <Badge tone="ok" dot={false}>aberto</Badge>}
       {pr.conflicted && (
         <Button size="xs" variant="ghost" className="text-bad" onClick={() => onOpenConflict(pr.number)}>
           <GitMerge size={12} /> conflitos
@@ -696,7 +699,7 @@ function PrsTab({ projects }) {
                 <div className="flex flex-col gap-2">
                   {merged.map((pr) => (
                     <div key={pr.number} className="flex items-center gap-3 p-3 rounded-lg border border-line bg-subtle/40">
-                      <Badge tone="ok" dot={false}>mergeado</Badge>
+                      <Badge tone="violet" dot={false}>mergeado</Badge>
                       <a href={pr.url} target="_blank" rel="noreferrer" className="text-[12px] text-muted truncate hover:text-accent flex-1 min-w-0">#{pr.number} {pr.title}</a>
                       <span className="data text-[10.5px] text-faint flex-none">{pr.mergedAt ? fmtRelative(pr.mergedAt) : ''}</span>
                     </div>

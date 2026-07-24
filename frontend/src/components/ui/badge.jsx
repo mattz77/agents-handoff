@@ -8,6 +8,9 @@ const tones = {
   warn: 'bg-warn-soft text-warn border-warn/25',
   bad: 'bg-bad-soft text-bad border-bad/25',
   info: 'bg-info-soft text-info border-info/25',
+  // Fixo, independente do --accent (que segue a cor primária escolhida pelo usuário) — convenção
+  // universal de PR (GitHub/GitLab): merge sempre violeta, não deve mudar se o accent mudar.
+  violet: 'bg-violet-500/10 text-violet-400 border-violet-500/25',
 };
 
 const dotColors = {
@@ -17,6 +20,7 @@ const dotColors = {
   warn: 'bg-warn',
   bad: 'bg-bad',
   info: 'bg-info',
+  violet: 'bg-violet-500',
 };
 
 export function Badge({ tone = 'neutral', pulse = false, dot = true, className, children }) {
