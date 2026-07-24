@@ -1,18 +1,19 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Cpu, Zap, CheckCircle2, KeyRound, Trash2, ShieldAlert } from 'lucide-react';
+import { Zap, CheckCircle2, KeyRound, Trash2, ShieldAlert } from 'lucide-react';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
 import { Badge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, Spotlight } from '../components/ui/misc.jsx';
+import { BrandBadge } from '../components/ui/brand-icons.jsx';
 
 const PROVIDER_META = {
-  nim: { name: 'NVIDIA NIM', hint: 'z-ai/glm-5.2', keyHint: 'nvapi-…', showBaseUrl: true },
-  openai: { name: 'OpenAI', hint: 'gpt-5', keyHint: 'sk-…', showBaseUrl: false },
-  anthropic: { name: 'Anthropic', hint: 'claude-sonnet-5', keyHint: 'sk-ant-…', showBaseUrl: false },
-  opencode: { name: 'OpenCode Go', hint: 'deepseek-v4-flash-free', keyHint: 'opencode zen key', showBaseUrl: true },
+  nim: { name: 'NVIDIA NIM', hint: 'z-ai/glm-5.2', keyHint: 'nvapi-…', showBaseUrl: true, brand: 'nvidia' },
+  openai: { name: 'OpenAI', hint: 'gpt-5', keyHint: 'sk-…', showBaseUrl: false, brand: null },
+  anthropic: { name: 'Anthropic', hint: 'claude-sonnet-5', keyHint: 'sk-ant-…', showBaseUrl: false, brand: 'anthropic' },
+  opencode: { name: 'OpenCode Go', hint: 'deepseek-v4-flash-free', keyHint: 'opencode zen key', showBaseUrl: true, brand: 'opencode' },
 };
 
 function ProviderCard({ p, secretsEnabled }) {
@@ -68,8 +69,8 @@ function ProviderCard({ p, secretsEnabled }) {
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-3 min-w-0">
           <span className={cn('w-9 h-9 rounded-lg border flex items-center justify-center flex-none',
-            p.is_default ? 'bg-accent-soft border-accent-line/50 text-accent' : 'bg-subtle border-line text-faint')}>
-            <Cpu size={16} strokeWidth={1.8} />
+            p.is_default ? 'bg-accent-soft border-accent-line/50 text-accent' : 'bg-subtle border-line text-fg')}>
+            <BrandBadge brand={meta.brand} text={meta.name} size={17} />
           </span>
           <div className="min-w-0">
             <p className="text-[13.5px] font-semibold text-fg truncate">{meta.name}</p>

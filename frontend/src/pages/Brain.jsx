@@ -6,6 +6,7 @@ import { cn } from '../lib/cn';
 import { Badge, StatusBadge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, EmptyState, Spotlight, Spinner } from '../components/ui/misc.jsx';
+import { BrandIcon, brandForText } from '../components/ui/brand-icons.jsx';
 import { fmtRelative } from '../lib/format';
 
 function SemanticSearch() {
@@ -82,7 +83,9 @@ export default function BrainPage() {
             <SectionHeader title="Modelo ativo" sub="quem está dirigindo agora" />
             <div className="flex items-center gap-3">
               <span className="w-10 h-10 rounded-xl bg-accent-soft border border-accent-line/50 flex items-center justify-center text-accent">
-                <Sparkles size={17} strokeWidth={1.8} />
+                {brandForText(data.activeModel)
+                  ? <BrandIcon brand={brandForText(data.activeModel)} size={18} />
+                  : <Sparkles size={17} strokeWidth={1.8} />}
               </span>
               <div>
                 <p className="text-[15px] font-semibold text-fg">{data.activeModel || '—'}</p>
@@ -124,9 +127,11 @@ export default function BrainPage() {
           <SectionHeader title="Decisões recentes" sub="log append-only de decisões arquiteturais" />
           {decisions.length === 0 ? <EmptyState icon={BookOpen} title="Sem decisões registradas" /> : (
             <div className="flex flex-col gap-2.5 max-h-[340px] overflow-y-auto -mr-1 pr-1">
-              {decisions.slice(0, 15).map((d, i) => (
+              {decisions.slice(0, 15).map((d, i) => {
+                const brand = brandForText(d.model);
+                return (
                 <div key={i} className="flex gap-3 p-3 rounded-lg border border-line bg-subtle/50">
-                  <Brain size={14} className="text-accent flex-none mt-0.5" />
+                  {brand ? <BrandIcon brand={brand} size={14} className="text-accent flex-none mt-0.5" /> : <Brain size={14} className="text-accent flex-none mt-0.5" />}
                   <div className="min-w-0">
                     <p className="text-[12.5px] text-fg leading-snug">{d.title || d.decision || d.text}</p>
                     <p className="data text-[10.5px] text-faint mt-1">
@@ -134,7 +139,8 @@ export default function BrainPage() {
                     </p>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Spotlight>

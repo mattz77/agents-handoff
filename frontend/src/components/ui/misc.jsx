@@ -24,12 +24,15 @@ export function Spotlight({ className, children, ...props }) {
   );
 }
 
-export function SectionHeader({ title, sub, actions, className }) {
+export function SectionHeader({ title, sub, actions, icon, className }) {
   return (
     <div className={cn('flex items-start justify-between gap-4 mb-4', className)}>
-      <div className="min-w-0">
-        <h2 className="text-[14px] font-semibold text-fg tracking-tight">{title}</h2>
-        {sub && <p className="text-[12px] text-faint mt-0.5">{sub}</p>}
+      <div className="flex items-center gap-2.5 min-w-0">
+        {icon && <span className="flex-none">{icon}</span>}
+        <div className="min-w-0">
+          <h2 className="text-[14px] font-semibold text-fg tracking-tight">{title}</h2>
+          {sub && <p className="text-[12px] text-faint mt-0.5">{sub}</p>}
+        </div>
       </div>
       {actions && <div className="flex items-center gap-2 flex-none">{actions}</div>}
     </div>

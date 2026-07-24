@@ -7,6 +7,7 @@ import { cn } from '../lib/cn';
 import { Badge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, EmptyState, Spotlight, AlertsList } from '../components/ui/misc.jsx';
+import { BrandIcon } from '../components/ui/brand-icons.jsx';
 import { fmtRelative } from '../lib/format';
 
 function DockerCard() {
@@ -171,6 +172,7 @@ function GithubTokenCard() {
       <SectionHeader
         title="GitHub PAT"
         sub="token usado pra diffs, comentários e merge de PR"
+        icon={<span className="w-7 h-7 rounded-lg bg-subtle border border-line flex items-center justify-center text-fg"><BrandIcon brand="github" size={15} /></span>}
         actions={
           d.configured ? (
             <Badge tone="ok" dot={false}>configurado ({d.source})</Badge>

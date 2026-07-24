@@ -7,6 +7,7 @@ import { cn } from '../lib/cn';
 import { Badge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, EmptyState, Spotlight } from '../components/ui/misc.jsx';
+import { BrandIcon, brandForText } from '../components/ui/brand-icons.jsx';
 import { AgentTaskDrawer } from '../components/drawers/AgentTaskDrawer.jsx';
 import { fmtRelative } from '../lib/format';
 
@@ -40,7 +41,10 @@ function TaskCard({ task, onOpen }) {
       <div className="flex items-center gap-2 mt-2.5 flex-wrap">
         {(task.agent || task.engine) && (
           <span className="flex items-center gap-1 text-[10.5px] data text-faint">
-            <Bot size={11} /> {task.agent || task.engine}
+            {brandForText(task.agent || task.engine)
+              ? <BrandIcon brand={brandForText(task.agent || task.engine)} size={11} />
+              : <Bot size={11} />}
+            {task.agent || task.engine}
           </span>
         )}
         {task.branch && (

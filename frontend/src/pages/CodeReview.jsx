@@ -8,6 +8,7 @@ import {
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
 import { Badge, StatusBadge } from '../components/ui/badge.jsx';
+import { BrandIcon, brandForText } from '../components/ui/brand-icons.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, EmptyState, Spotlight } from '../components/ui/misc.jsx';
 import { Drawer } from '../components/ui/drawer.jsx';
@@ -431,8 +432,10 @@ function ReportsTab() {
                   <ScoreRing score={latest.score != null ? Number(latest.score) : null} />
                   <div className="min-w-0">
                     <p className="text-[14px] font-semibold text-fg truncate">{latest.display_name || latest.project_slug}</p>
-                    <p className="data text-[11px] text-faint mt-0.5 truncate">
-                      {(latest.commit_sha || '').slice(0, 7) || '—'} · {latest.model_used || 'modelo n/d'}
+                    <p className="data text-[11px] text-faint mt-0.5 truncate flex items-center gap-1.5">
+                      {(latest.commit_sha || '').slice(0, 7) || '—'} ·
+                      {brandForText(latest.model_used) && <BrandIcon brand={brandForText(latest.model_used)} size={11} className="flex-none" />}
+                      {latest.model_used || 'modelo n/d'}
                     </p>
                     <p className="data text-[11px] text-faint">{fmtDateTime(latest.created_at)}</p>
                     {trendScores.length > 1 && (

@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { Badge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, EmptyState, Spotlight } from '../components/ui/misc.jsx';
+import { BrandIcon } from '../components/ui/brand-icons.jsx';
 
 const emptyForm = {
   slug: '', display_name: '', local_path: '', git_owner: '', git_repo: '',
@@ -129,7 +130,11 @@ export default function Projects() {
                       </span>
                       <div className="min-w-0">
                         <p className="text-[13.5px] font-semibold text-fg truncate">{p.display_name || p.slug}</p>
-                        {repo && <p className="data text-[10.5px] text-faint truncate">{repo}</p>}
+                        {repo && (
+                          <p className="data text-[10.5px] text-faint truncate flex items-center gap-1">
+                            <BrandIcon brand="github" size={10} className="flex-none" /> {repo}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 flex-none">
