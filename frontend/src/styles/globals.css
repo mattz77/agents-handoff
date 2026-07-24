@@ -225,7 +225,7 @@
     position: absolute;
     inset: 0;
     background: radial-gradient(
-      240px circle at var(--mx, 50%) var(--my, 50%),
+      40px circle at var(--mx, 50%) var(--my, 50%),
       var(--accent-soft),
       transparent 65%
     );
