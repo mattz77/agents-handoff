@@ -218,8 +218,8 @@ function ThroughputChart() {
             <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
               <defs>
                 <linearGradient id="thrOk" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.32} />
-                  <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
+                  <stop offset="0%" stopColor="var(--ok)" stopOpacity={0.32} />
+                  <stop offset="100%" stopColor="var(--ok)" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="thrBad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--bad)" stopOpacity={0.3} />
@@ -237,7 +237,7 @@ function ThroughputChart() {
                 labelStyle={{ color: 'var(--text-3)' }}
                 itemStyle={{ color: 'var(--text)' }}
               />
-              <Area type="monotone" dataKey="ok" name="sucesso" stroke="var(--accent)" strokeWidth={1.8} fill="url(#thrOk)" isAnimationActive={false} />
+              <Area type="monotone" dataKey="ok" name="sucesso" stroke="var(--ok)" strokeWidth={1.8} fill="url(#thrOk)" isAnimationActive={false} />
               <Area type="monotone" dataKey="failed" name="falhas" stroke="var(--bad)" strokeWidth={1.5} fill="url(#thrBad)" isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>

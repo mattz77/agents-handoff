@@ -23,10 +23,10 @@
   --text-2: #52525b;
   --text-3: #a1a1aa;
 
-  --accent: #4f56c0;
+  --accent: #d33636;
   --accent-fg: #ffffff;
-  --accent-soft: rgba(79, 86, 192, 0.1);
-  --accent-border: rgba(79, 86, 192, 0.35);
+  --accent-soft: rgba(211, 54, 54, 0.1);
+  --accent-border: rgba(211, 54, 54, 0.35);
 
   --ok: #0d9e63;
   --ok-soft: rgba(13, 158, 99, 0.1);
@@ -39,7 +39,7 @@
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 0 1px var(--border);
   --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--border);
-  --glow-accent: 0 0 24px rgba(79, 86, 192, 0.25);
+  --glow-accent: 0 0 24px rgba(211, 54, 54, 0.25);
 
   color-scheme: light;
 }
@@ -60,10 +60,10 @@
   --text-2: #9d9da6;
   --text-3: #5c5c66;
 
-  --accent: #5e6ad2;
-  --accent-fg: #eef0ff;
-  --accent-soft: rgba(94, 106, 210, 0.14);
-  --accent-border: rgba(94, 106, 210, 0.45);
+  --accent: #e5484d;
+  --accent-fg: #fff0f0;
+  --accent-soft: rgba(229, 72, 77, 0.14);
+  --accent-border: rgba(229, 72, 77, 0.45);
 
   --ok: #46c488;
   --ok-soft: rgba(70, 196, 136, 0.12);
@@ -76,7 +76,7 @@
 
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-pop: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 16px 48px rgba(0, 0, 0, 0.6);
-  --glow-accent: 0 0 32px rgba(94, 106, 210, 0.35);
+  --glow-accent: 0 0 32px rgba(229, 72, 77, 0.35);
 
   color-scheme: dark;
 }
@@ -225,7 +225,7 @@
     position: absolute;
     inset: 0;
     background: radial-gradient(
-      480px circle at var(--mx, 50%) var(--my, 50%),
+      240px circle at var(--mx, 50%) var(--my, 50%),
       var(--accent-soft),
       transparent 65%
     );
