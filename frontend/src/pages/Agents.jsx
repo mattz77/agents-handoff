@@ -23,11 +23,20 @@ const columnOf = (status) => {
   return COLUMNS.find((c) => c.tones.includes(s))?.id || 'queued';
 };
 
+const LIVE_STATUSES = ['queued', 'running'];
+
 function TaskCard({ task, onOpen }) {
   const title = task.title || task.description?.slice(0, 80) || task.id;
+  const isLive = LIVE_STATUSES.includes((task.status || '').toLowerCase());
+  const lastLog = Array.isArray(task.log) && task.log.length ? task.log[task.log.length - 1] : null;
   return (
     <Spotlight className="card card-interactive p-3.5" onClick={onOpen}>
       <p className="text-[12.5px] font-medium text-fg leading-snug">{title}</p>
+      {isLive && lastLog && (
+        <p className="flex items-center gap-1.5 mt-2 data text-[10.5px] text-accent truncate">
+          <span className="status-dot status-dot--pulse bg-accent flex-none" /> {lastLog.message}
+        </p>
+      )}
       <div className="flex items-center gap-2 mt-2.5 flex-wrap">
         {(task.agent || task.engine) && (
           <span className="flex items-center gap-1 text-[10.5px] data text-faint">
@@ -144,7 +153,15 @@ function CreateTaskModal({ open, onClose }) {
 export default function Agents() {
   const [modalOpen, setModalOpen] = React.useState(false);
   const [selected, setSelected] = React.useState(null);
-  const q = useQuery({ queryKey: ['agent-tasks'], queryFn: api.agentTasks, refetchInterval: 15_000 });
+  const q = useQuery({
+    queryKey: ['agent-tasks'], queryFn: api.agentTasks,
+    // Poll rápido enquanto alguma task está na fila/rodando — sensação de acompanhar ao vivo
+    // no kanban, não só dentro do drawer.
+    refetchInterval: (query) => {
+      const tasks = query.state.data?.tasks || [];
+      return tasks.some((t) => LIVE_STATUSES.includes((t.status || '').toLowerCase())) ? 3000 : 15_000;
+    },
+  });
   const items = q.data?.tasks || (Array.isArray(q.data) ? q.data : []);
 
   return (

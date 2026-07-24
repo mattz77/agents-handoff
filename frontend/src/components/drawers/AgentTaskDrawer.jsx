@@ -1,15 +1,18 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { RotateCcw, Trash2, ExternalLink, Check, X as XIcon } from 'lucide-react';
+import { RotateCcw, Trash2, ExternalLink, Check, X as XIcon, Terminal } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Drawer, KV, JsonBlock } from '../ui/drawer.jsx';
 import { StatusBadge } from '../ui/badge.jsx';
 import { Button } from '../ui/button.jsx';
 import { Spinner } from '../ui/misc.jsx';
-import { fmtDateTime, fmtRelative } from '../../lib/format';
+import { cn } from '../../lib/cn';
+import { fmtDateTime, fmtRelative, fmtTime } from '../../lib/format';
 
-/* Detalhe de task delegada — log completo, erro, ações (retry/delete/PR). */
+const LIVE_STATUSES = ['queued', 'running'];
+
+/* Detalhe de task delegada — log ao vivo enquanto em execução, ações (retry/delete/PR/approve). */
 export function AgentTaskDrawer({ task, onClose }) {
   const queryClient = useQueryClient();
   const id = task?.id;
@@ -17,8 +20,12 @@ export function AgentTaskDrawer({ task, onClose }) {
     queryKey: ['agent-task', id],
     queryFn: () => api.agentTask(id),
     enabled: !!id,
+    // Task roda em background no servidor (POST retorna 202 na hora) — só polling mostra o
+    // progresso real; sem isso o drawer ficava congelado no snapshot do momento em que abriu.
+    refetchInterval: (query) => LIVE_STATUSES.includes((query.state.data?.status || '').toLowerCase()) ? 2000 : false,
   });
   const t = q.data || task || {};
+  const isLive = LIVE_STATUSES.includes((t.status || '').toLowerCase());
   const canRetry = ['failed', 'rejected'].includes((t.status || '').toLowerCase());
   const canReview = !!t.pr_number && !['merged', 'rejected'].includes((t.status || '').toLowerCase());
 
@@ -97,9 +104,33 @@ export function AgentTaskDrawer({ task, onClose }) {
 
           {t.description && <JsonBlock data={t.description} label="Descrição" />}
           {t.error && <JsonBlock data={t.error} label="Erro" />}
-          {t.log && <JsonBlock data={t.log} label="Log do agente" />}
+          <LiveTaskLog log={t.log} live={isLive} />
         </>
       )}
     </Drawer>
+  );
+}
+
+function LiveTaskLog({ log, live }) {
+  const entries = Array.isArray(log) ? log : [];
+  const endRef = React.useRef(null);
+  React.useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [entries.length]);
+  if (entries.length === 0) return null;
+  return (
+    <div className="mt-4">
+      <div className="flex items-center gap-2 mb-1.5">
+        <Terminal size={11} className="text-faint" />
+        <p className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold">Log do agente</p>
+        {live && <span className="status-dot status-dot--pulse bg-accent" />}
+      </div>
+      <div className="data text-[11px] leading-[1.65] bg-[#050506] border border-line rounded-lg p-3 max-h-[300px] overflow-y-auto">
+        {entries.map((l, i) => (
+          <div key={i} className="text-muted whitespace-pre-wrap break-words">
+            <span className="text-faint">{fmtTime(l.at)}</span> {l.message}
+          </div>
+        ))}
+        <div ref={endRef} />
+      </div>
+    </div>
   );
 }

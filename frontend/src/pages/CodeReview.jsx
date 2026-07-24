@@ -263,7 +263,6 @@ function ReportsTab() {
   const [projectFilter, setProjectFilter] = React.useState('');
   const [selected, setSelected] = React.useState(0);
   const [showModels, setShowModels] = React.useState(false);
-  const [runStep, setRunStep] = React.useState('');
   const [mergedFlag, setMergedFlag] = React.useState({});
 
   const sel = {
@@ -297,28 +296,38 @@ function ReportsTab() {
   const projAttacks = latest ? attacks.filter((a) => a.report_id === latest.id) : [];
   const attacking = attacks.some((a) => a.status === 'running' && a.project_slug === shownSlug);
 
+  // POST /codereview/run fica pendurado até o review terminar (o backend faz `await` do ciclo
+  // inteiro) — não dá pra depender só do fetch pra "tempo real": se a aba não estiver com o
+  // projeto certo selecionado, ou o proxy cortar a conexão longa (blip de rede), a UI ficava
+  // muda até o fetch resolver (ou nunca). Poll dedicado e independente do mutate resolve os dois
+  // casos: cobre "Todos" (getAllReviewProgress) e sobrevive mesmo se o fetch original falhar.
+  const runStatusQ = useQuery({
+    queryKey: ['codereview-run-status', projectFilter],
+    queryFn: () => api.codereviewRunStatus(projectFilter || undefined),
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      const running = projectFilter ? d?.status === 'running' : Object.values(d || {}).some((p) => p?.status === 'running');
+      return running ? 1500 : 6000;
+    },
+  });
+  const runningEntries = projectFilter
+    ? (runStatusQ.data?.status === 'running' ? [[projectFilter, runStatusQ.data]] : [])
+    : Object.entries(runStatusQ.data || {}).filter(([, p]) => p?.status === 'running');
+  const anyRunning = runningEntries.length > 0;
+
   const run = useMutation({
     mutationFn: () => {
       const [reviewModel] = sel.review;
       return api.runCodereview({ ...(projectFilter ? { slug: projectFilter } : {}), ...(reviewModel ? { model: reviewModel } : {}) });
     },
-    onMutate: () => setRunStep('iniciando…'),
-    onSuccess: () => { toast.success('Review disparado'); queryClient.invalidateQueries({ queryKey: ['codereview'] }); },
+    onSuccess: (r) => {
+      if (r?.ok === false) toast.error(r.error || 'Review falhou');
+      else toast.success('Review concluído');
+      queryClient.invalidateQueries({ queryKey: ['codereview'] });
+      runStatusQ.refetch();
+    },
     onError: (e) => toast.error(`Review falhou: ${e.message}`),
-    onSettled: () => setRunStep(''),
   });
-
-  // Poll do step ao vivo quando review de projeto específico está rodando.
-  React.useEffect(() => {
-    if (!run.isPending || !projectFilter) return;
-    const t = setInterval(async () => {
-      try {
-        const p = await api.codereviewRunStatus(projectFilter);
-        if (p?.status === 'running') setRunStep(p.step || '');
-      } catch { /* mantém */ }
-    }, 1500);
-    return () => clearInterval(t);
-  }, [run.isPending, projectFilter]);
 
   const attack = useMutation({
     mutationFn: (report) => {
@@ -363,8 +372,8 @@ function ReportsTab() {
           <Button variant="ghost" size="sm" onClick={() => setShowModels((v) => !v)} className={showModels ? 'text-accent' : ''}>
             <Sliders size={13} /> Modelos
           </Button>
-          <Button variant="primary" size="sm" loading={run.isPending} onClick={() => run.mutate()}>
-            <Play size={13} /> {run.isPending ? 'Rodando…' : projectFilter ? `Rodar — ${projectFilter}` : 'Rodar review'}
+          <Button variant="primary" size="sm" loading={run.isPending} disabled={anyRunning && !run.isPending} onClick={() => run.mutate()}>
+            <Play size={13} /> {run.isPending || anyRunning ? 'Rodando…' : projectFilter ? `Rodar — ${projectFilter}` : 'Rodar review'}
           </Button>
           {latest && (
             <Button variant="soft" size="sm" loading={attack.isPending}
@@ -376,9 +385,14 @@ function ReportsTab() {
         </div>
       </div>
       <ModelPickers open={showModels} models={models} recommended={recommended} sel={sel} />
-      {run.isPending && runStep && (
-        <div className="flex items-center gap-2 data text-[11.5px] text-muted">
-          <span className="status-dot status-dot--pulse bg-accent" /> {runStep}
+      {anyRunning && (
+        <div className="flex flex-col gap-1">
+          {runningEntries.map(([slug, p]) => (
+            <div key={slug} className="flex items-center gap-2 data text-[11.5px] text-muted">
+              <span className="status-dot status-dot--pulse bg-accent" />
+              {!projectFilter && <span className="text-fg font-medium">{slug}:</span>} {p.step || 'rodando…'}
+            </div>
+          ))}
         </div>
       )}
     </div>
