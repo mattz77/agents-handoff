@@ -9,7 +9,7 @@ const OUT = process.argv.includes('--out')
   : 'design/prints';
 fs.mkdirSync(OUT, { recursive: true });
 
-const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const CHROME = process.env.CHROME_PATH || undefined;
 const TABS = [
   ['overview', 'Visão geral'],
   ['handoffs', 'Handoffs'],
@@ -23,6 +23,7 @@ const TABS = [
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
+  ...(CHROME ? {} : { channel: 'chrome' }),
   args: ['--no-sandbox', '--hide-scrollbars'],
 });
 const page = await browser.newPage();
