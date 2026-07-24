@@ -42,14 +42,14 @@ services:
       - CODEREVIEW_MAX_DIFF_CHARS=${CODEREVIEW_MAX_DIFF_CHARS:-80000}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       # Daemon-TaskAgent (Kanban de tasks delegadas) — motor "claude-cli" precisa da key.
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required}
       - TASK_CLAUDE_TIMEOUT_MS=${TASK_CLAUDE_TIMEOUT_MS:-600000}
       # Agent API (Telegram via n8n / AnythingLLM agent skill) — rotas /agent/*
       - AGENT_API_TOKEN=${AGENT_API_TOKEN:-}
       # Webhook do GitHub (workflow_run -> Daemon-CIFixAgent)
-      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET is required}
       # Provedores de IA (TASK 38) — master key p/ criptografar API keys OpenAI/Anthropic/NIM (AES-256-GCM)
-      - AGENT_PROVIDER_MASTER_KEY=${AGENT_PROVIDER_MASTER_KEY:-}
+      - AGENT_PROVIDER_MASTER_KEY=${AGENT_PROVIDER_MASTER_KEY:?AGENT_PROVIDER_MASTER_KEY is required}
       # OpenCode Go (TASK 39) — OpenAI-compatible em opencode.ai/zen/v1
       - OPENCODE_GO_API_KEY=${OPENCODE_GO_API_KEY:-}
       - OPENCODE_GO_BASE_URL=${OPENCODE_GO_BASE_URL:-https://opencode.ai/zen/v1}
