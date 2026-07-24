@@ -91,20 +91,45 @@ export async function detectStackFactsLocal(workdir: string): Promise<StackFacts
   return factsFromSources(pkgJsonText, tsconfigText);
 }
 
+/** Remove comentários e literais de string/template antes do match — reduz falso positivo
+ *  quando um arquivo qualquer só MENCIONA "import.meta"/"require(" numa mensagem de log ou
+ *  comentário sem de fato usar a sintaxe. NÃO resolve o caso deste próprio arquivo (ver
+ *  GUARD_SELF_REFERENCE_FILES abaixo): a regex de detecção `/\bimport\.meta\b/` contém o
+ *  texto "import.meta" como CÓDIGO real (o padrão da regex), não comentário/string — nenhuma
+ *  quantidade de stripping de comentário resolve um arquivo se autodetectar através da própria
+ *  regex que o implementa. */
+function stripNonCode(content: string): string {
+  return content
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1")
+    .replace(/`(?:[^`\\]|\\.)*`/g, "``")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''");
+}
+
+// Estes dois arquivos IMPLEMENTAM a guarda (citam "import.meta"/"require("/"__dirname" em
+// regex, comentários e mensagens de erro pra explicar a própria regra) — sempre se
+// autodetectam como violação, já que a Contents API manda o arquivo inteiro pro Verifier,
+// não só o hunk. Achado real: PR #24, ataque do GLM-5.2 reprovado por falso positivo aqui.
+const GUARD_SELF_REFERENCE_FILES = new Set(["agent-safety.ts", "verify-agent.ts"]);
+
 /** Regras determinísticas — não dependem do modelo ter lido/obedecido o prompt.
  *  Roda em CIMA do conteúdo final do arquivo, antes do commit. Retorna motivo se violar. */
 export function staticGuard(path: string, content: string, facts: StackFacts): { ok: true } | { ok: false; reason: string } {
   if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/i.test(path)) return { ok: true };
+  const basename = path.split(/[\\/]/).pop() || path;
+  if (GUARD_SELF_REFERENCE_FILES.has(basename)) return { ok: true };
+  const code = stripNonCode(content);
   if (facts.moduleSystem === "commonjs") {
-    if (/\bimport\.meta\b/.test(content)) {
+    if (/\bimport\.meta\b/.test(code)) {
       return { ok: false, reason: `usa import.meta (sintaxe ESM) em projeto CommonJS — não compila (TS1343). Use process.cwd() ou __dirname nativo.` };
     }
   }
   if (facts.moduleSystem === "esm") {
-    if (/\brequire\s*\(/.test(content) && !/\bcreateRequire\b/.test(content)) {
+    if (/\brequire\s*\(/.test(code) && !/\bcreateRequire\b/.test(code)) {
       return { ok: false, reason: `usa require() em projeto ESM ("type":"module") — não roda sem createRequire.` };
     }
-    if (/\b__dirname\b|\b__filename\b/.test(content) && !/fileURLToPath/.test(content)) {
+    if (/\b__dirname\b|\b__filename\b/.test(code) && !/fileURLToPath/.test(code)) {
       return { ok: false, reason: `usa __dirname/__filename (globals CommonJS) em projeto ESM — undefined em runtime. Derive via fileURLToPath(import.meta.url).` };
     }
   }
