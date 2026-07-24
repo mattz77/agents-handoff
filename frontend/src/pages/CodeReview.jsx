@@ -503,6 +503,9 @@ function ReportsTab() {
                 <div className="flex flex-col gap-4">
                   <Spotlight className="card p-5">
                     <SectionHeader title="Resumo da revisão" />
+                    {issues.length === 0 && latest.pr_number && (
+                      <Badge tone="ok" className="gap-1 mb-3"><Check size={10} /> aprovado · pronto pra merge</Badge>
+                    )}
                     <p className="text-[12.5px] text-muted leading-relaxed whitespace-pre-wrap">{latest.summary || 'Sem resumo disponível.'}</p>
                     {latest.pr_url && (
                       <a href={latest.pr_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 mt-3 text-[12px] text-accent hover:underline">
@@ -630,7 +633,7 @@ function ConflictDrawer({ open, slug, prNumber, onClose }) {
 
 /* ---------------- PRs & Merge tab ---------------- */
 
-function PrRow({ pr, slug, onOpenConflict, onMerged }) {
+function PrRow({ pr, slug, approved, onOpenConflict, onMerged }) {
   const queryClient = useQueryClient();
   const merge = useMutation({
     mutationFn: () => api.mergePr({ slug, prNumber: pr.number, mergeMethod: 'squash' }),
@@ -641,20 +644,26 @@ function PrRow({ pr, slug, onOpenConflict, onMerged }) {
     },
     onError: (e) => toast.error(`Merge falhou: ${e.message}`),
   });
+  const readyToMerge = approved && !pr.conflicted && !pr.draft;
   return (
-    <div className="flex items-center gap-3 p-3.5 rounded-lg border border-line bg-subtle/50 hover:bg-hover transition-colors">
-      <GitPullRequest size={14} className="text-accent flex-none" />
+    <div className={cn(
+      'flex items-center gap-3 p-3.5 rounded-lg border bg-subtle/50 hover:bg-hover transition-colors',
+      readyToMerge ? 'border-ok/30 bg-ok-soft/20' : 'border-line',
+    )}>
+      <GitPullRequest size={14} className={readyToMerge ? 'text-ok flex-none' : 'text-accent flex-none'} />
       <div className="min-w-0 flex-1">
         <a href={pr.url} target="_blank" rel="noreferrer" className="text-[12.5px] font-medium text-fg truncate hover:text-accent block">#{pr.number} · {pr.title || 'sem título'}</a>
         <p className="data text-[10.5px] text-faint mt-0.5 truncate">{[pr.head, pr.base && `→ ${pr.base}`, pr.author].filter(Boolean).join(' ')}</p>
       </div>
-      {pr.draft ? <Badge tone="neutral" dot={false}>draft</Badge> : <Badge tone="ok" dot={false}>aberto</Badge>}
+      {readyToMerge && <Badge tone="ok" className="gap-1"><Check size={10} /> aprovado · pronto pra merge</Badge>}
+      {pr.draft && <Badge tone="neutral" dot={false}>draft</Badge>}
+      {!pr.draft && !readyToMerge && <Badge tone="ok" dot={false}>aberto</Badge>}
       {pr.conflicted && (
         <Button size="xs" variant="ghost" className="text-bad" onClick={() => onOpenConflict(pr.number)}>
           <GitMerge size={12} /> conflitos
         </Button>
       )}
-      <Button size="xs" variant="soft" loading={merge.isPending} disabled={pr.conflicted} onClick={() => merge.mutate()}>
+      <Button size="xs" variant={readyToMerge ? 'primary' : 'soft'} loading={merge.isPending} disabled={pr.conflicted} onClick={() => merge.mutate()}>
         <GitMerge size={12} /> Merge
       </Button>
     </div>
@@ -668,6 +677,20 @@ function PrsTab({ projects }) {
   const q = useQuery({ queryKey: ['codereview-prs', effective], queryFn: () => api.codereviewPrs(effective), enabled: !!effective });
   const open = q.data?.open || [];
   const merged = q.data?.merged || [];
+
+  // Cruza PR aberto com o report mais recente daquele número — sem issues = já auditado e
+  // pronto pra merge, sem depender de rodar ataque/verify (que só existe pra corrigir issue).
+  const reportsQ = useQuery({ queryKey: ['codereview'], queryFn: () => api.codereview() });
+  const approvedPrNumbers = React.useMemo(() => {
+    const reports = reportsQ.data?.reports || [];
+    const set = new Set();
+    for (const r of reports) {
+      if (r.project_slug !== effective) continue;
+      const issues = Array.isArray(r.issues) ? r.issues.length : 0;
+      if (issues === 0 && r.pr_number) set.add(r.pr_number);
+    }
+    return set;
+  }, [reportsQ.data, effective]);
 
   return (
     <div>
@@ -689,7 +712,10 @@ function PrsTab({ projects }) {
               <div>
                 <p className="text-[10.5px] uppercase tracking-[0.07em] text-faint font-semibold mb-2">Abertos ({open.length})</p>
                 <div className="flex flex-col gap-2">
-                  {open.map((pr) => <PrRow key={pr.number} pr={pr} slug={effective} onOpenConflict={(n) => setConflictPr(n)} onMerged={() => q.refetch()} />)}
+                  {open.map((pr) => (
+                    <PrRow key={pr.number} pr={pr} slug={effective} approved={approvedPrNumbers.has(pr.number)}
+                      onOpenConflict={(n) => setConflictPr(n)} onMerged={() => q.refetch()} />
+                  ))}
                 </div>
               </div>
             )}
