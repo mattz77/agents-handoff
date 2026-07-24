@@ -61,9 +61,11 @@ export function ErrorState({ error, onRetry, className }) {
   );
 }
 
-/* Estado padrão de query: loading → skeleton, error → ErrorState, senão children */
+/* Estado padrão de query: loading → skeleton, error → ErrorState, senão children.
+   ATENÇÃO: children não devem desreferenciar query.data em props — o JSX dos
+   filhos é avaliado no render do pai. Prefira guard early-return na página. */
 export function QueryState({ query, skeleton, children }) {
-  if (query.isPending) return skeleton || <div className="skeleton h-32 w-full" />;
+  if (query.isPending || query.data === undefined) return skeleton || <div className="skeleton h-32 w-full" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   return children;
 }

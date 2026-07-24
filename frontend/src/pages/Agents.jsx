@@ -7,6 +7,7 @@ import { cn } from '../lib/cn';
 import { Badge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, EmptyState, Spotlight } from '../components/ui/misc.jsx';
+import { AgentTaskDrawer } from '../components/drawers/AgentTaskDrawer.jsx';
 import { fmtRelative } from '../lib/format';
 
 const COLUMNS = [
@@ -22,15 +23,15 @@ const columnOf = (status) => {
   return COLUMNS.find((c) => c.tones.includes(s))?.id || 'queued';
 };
 
-function TaskCard({ task }) {
+function TaskCard({ task, onOpen }) {
   const title = task.title || task.description?.slice(0, 80) || task.id;
   return (
-    <Spotlight className="card card-interactive p-3.5">
+    <Spotlight className="card card-interactive p-3.5" onClick={onOpen}>
       <p className="text-[12.5px] font-medium text-fg leading-snug">{title}</p>
       <div className="flex items-center gap-2 mt-2.5 flex-wrap">
-        {task.agent && (
+        {(task.agent || task.engine) && (
           <span className="flex items-center gap-1 text-[10.5px] data text-faint">
-            <Bot size={11} /> {task.agent}
+            <Bot size={11} /> {task.agent || task.engine}
           </span>
         )}
         {task.branch && (
@@ -111,8 +112,9 @@ function CreateTaskModal({ open, onClose }) {
 
 export default function Agents() {
   const [modalOpen, setModalOpen] = React.useState(false);
+  const [selected, setSelected] = React.useState(null);
   const q = useQuery({ queryKey: ['agent-tasks'], queryFn: api.agentTasks, refetchInterval: 15_000 });
-  const items = Array.isArray(q.data) ? q.data : q.data?.tasks || [];
+  const items = q.data?.tasks || (Array.isArray(q.data) ? q.data : []);
 
   return (
     <div>
@@ -139,7 +141,7 @@ export default function Agents() {
                     <span className="data tnum text-[11px] text-faint">{tasks.length}</span>
                   </div>
                   <div className="flex flex-col gap-2 min-h-[60px] p-1.5 rounded-xl border border-dashed border-line/70 bg-subtle/40">
-                    {tasks.map((t) => <TaskCard key={t.id} task={t} />)}
+                    {tasks.map((t) => <TaskCard key={t.id} task={t} onOpen={() => setSelected(t)} />)}
                   </div>
                 </div>
               );
@@ -148,6 +150,7 @@ export default function Agents() {
         )}
       </QueryState>
       <CreateTaskModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <AgentTaskDrawer task={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }

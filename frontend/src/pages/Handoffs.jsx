@@ -1,12 +1,13 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { RotateCcw, Inbox, AlertOctagon, ArrowLeftRight, ShieldAlert } from 'lucide-react';
+import { RotateCcw, Inbox, AlertOctagon, ArrowLeftRight, ShieldAlert, ChevronRight } from 'lucide-react';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
 import { Badge, StatusBadge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
 import { SectionHeader, QueryState, EmptyState, Spotlight } from '../components/ui/misc.jsx';
+import { HandoffDrawer } from '../components/drawers/HandoffDrawer.jsx';
 import { fmtRelative, fmtDateTime } from '../lib/format';
 
 const TABS = [
@@ -18,6 +19,7 @@ const TABS = [
 
 function StreamTab() {
   const q = useQuery({ queryKey: ['handoffs'], queryFn: api.handoffs });
+  const [inspect, setInspect] = React.useState(null);
   const items = Array.isArray(q.data) ? q.data : q.data?.items || [];
   return (
     <QueryState query={q} skeleton={<div className="skeleton h-64" />}>
@@ -26,26 +28,37 @@ function StreamTab() {
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="border-b border-line text-left">
-                {['Task', 'Origem → Destino', 'Status', 'Atualizado'].map((h) => (
+                {['Task', 'Origem → Destino', 'Status', 'Atualizado', ''].map((h) => (
                   <th key={h} className="px-4 py-2.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-faint">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {items.map((h, i) => (
-                <tr key={h.task_id || h.id || i} className="border-b border-line/60 last:border-0 hover:bg-hover transition-colors">
-                  <td className="px-4 py-2.5 data text-fg max-w-[220px] truncate">{h.task_id || h.id}</td>
-                  <td className="px-4 py-2.5 data text-muted">
-                    {h.source_agent || h.from || '—'} <span className="text-faint">→</span> {h.target_agent || h.to || '—'}
+                <tr
+                  key={h.task_id || h.id || i}
+                  onClick={() => setInspect(h.task_id || h.id)}
+                  className="border-b border-line/60 last:border-0 hover:bg-hover transition-colors cursor-pointer group"
+                >
+                  <td className="px-4 py-2.5 max-w-[260px]">
+                    <span className="data text-fg block truncate">{h.hermes_resumo || h.task_id || h.id}</span>
+                    {h.project && <span className="data text-[10.5px] text-faint">{h.project}{h.branch ? ` · ${h.branch}` : ''}</span>}
+                  </td>
+                  <td className="px-4 py-2.5 data text-muted whitespace-nowrap">
+                    {h.sender || '—'} <span className="text-faint">→</span> {h.receiver || '—'}
                   </td>
                   <td className="px-4 py-2.5"><StatusBadge status={h.lifecycle_status || h.status} /></td>
-                  <td className="px-4 py-2.5 data text-faint">{fmtRelative(h.updated_at || h.created_at)}</td>
+                  <td className="px-4 py-2.5 data text-faint whitespace-nowrap">{fmtRelative(h.updated_at || h.created_at)}</td>
+                  <td className="px-2 py-2.5 w-8">
+                    <ChevronRight size={14} className="text-faint opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      <HandoffDrawer id={inspect} onClose={() => setInspect(null)} />
     </QueryState>
   );
 }
@@ -111,7 +124,7 @@ function OutboxTab() {
               {items.map((o, i) => (
                 <tr key={o.id || i} className="border-b border-line/60 last:border-0 hover:bg-hover transition-colors">
                   <td className="px-4 py-2.5 data text-fg">{o.id}</td>
-                  <td className="px-4 py-2.5 data text-muted">{o.channel || o.type || '—'}</td>
+                  <td className="px-4 py-2.5 data text-muted">{o.event_type || o.channel || '—'}</td>
                   <td className="px-4 py-2.5"><StatusBadge status={o.status} /></td>
                   <td className="px-4 py-2.5 data tnum text-muted">{o.attempts ?? o.tries ?? 0}</td>
                   <td className="px-4 py-2.5 data text-faint">{fmtRelative(o.created_at)}</td>

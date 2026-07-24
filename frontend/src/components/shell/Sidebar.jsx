@@ -115,9 +115,13 @@ export function Sidebar() {
               <span className="text-[12px] font-medium text-fg truncate">mattz77.mo</span>
               <span className="text-[10px] text-faint data mt-0.5">OTP verificado</span>
             </div>
-            <button className="ml-auto text-faint hover:text-bad transition-colors cursor-pointer flex-none" title="Sair">
+            <a
+              href="/cdn-cgi/access/logout"
+              className="ml-auto text-faint hover:text-bad transition-colors cursor-pointer flex-none"
+              title="Sair (Cloudflare Access)"
+            >
               <LogOut size={14} />
-            </button>
+            </a>
           </div>
         </div>
       </aside>

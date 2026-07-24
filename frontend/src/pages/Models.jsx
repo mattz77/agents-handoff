@@ -96,25 +96,28 @@ export default function Models() {
   });
 
   const data = q.data || {};
-  const providers = data.providers || data;
-  const defaultType = data.default || data.defaultProvider;
-  const types = Object.keys(providers).filter((k) => typeof providers[k] === 'object' && providers[k] !== null);
+  const list = Array.isArray(data.providers) ? data.providers : [];
+  const secretsEnabled = data.secretsEnabled;
 
   return (
     <div>
-      <SectionHeader title="Providers de IA" sub="Chaves, modelo default e teste de conectividade por provider" />
+      <SectionHeader
+        title="Providers de IA"
+        sub="Chaves, modelo default e teste de conectividade por provider"
+        actions={secretsEnabled === false && <Badge tone="warn" dot={false}>MASTER_KEY ausente — env fallback</Badge>}
+      />
       <QueryState query={q} skeleton={<div className="grid sm:grid-cols-2 gap-3">{[...Array(4)].map((_, i) => <div key={i} className="skeleton h-44" />)}</div>}>
         <div className="grid sm:grid-cols-2 gap-3">
-          {types.map((type) => (
+          {list.map((p) => (
             <ProviderCard
-              key={type}
-              type={type}
-              config={providers[type]}
-              isDefault={type === defaultType}
-              testing={testing === type}
-              testResult={results[type]}
-              onTest={() => test.mutate(type)}
-              onSetDefault={() => save.mutate({ ...data, default: type })}
+              key={p.provider}
+              type={p.provider}
+              config={{ apiKey: p.configured, model: p.model, baseUrl: p.base_url }}
+              isDefault={!!p.is_default}
+              testing={testing === p.provider}
+              testResult={results[p.provider]}
+              onTest={() => test.mutate(p.provider)}
+              onSetDefault={() => save.mutate({ default: p.provider })}
             />
           ))}
         </div>

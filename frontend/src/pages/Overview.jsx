@@ -92,18 +92,18 @@ function StatusBreakdown({ data }) {
 
 function ThroughputChart() {
   const q = useQuery({ queryKey: ['timeline'], queryFn: api.timeline });
-  const raw = q.data;
-  const series = Array.isArray(raw) ? raw : raw?.series || raw?.buckets || [];
-  const chartData = series.slice(-48).map((p) => ({
-    t: p.ts || p.t || p.time || p.bucket,
-    n: p.count ?? p.n ?? p.value ?? 0,
+  const raw = Array.isArray(q.data) ? q.data : [];
+  const chartData = raw.map((p) => ({
+    t: (p.date || '').slice(5), // MM-DD
+    ok: Math.max((p.count ?? 0) - (p.failed ?? 0), 0),
+    failed: p.failed ?? 0,
   }));
 
   return (
     <Spotlight className="card p-5">
       <SectionHeader
         title="Throughput"
-        sub="volume de handoffs · janela recente"
+        sub="handoffs por dia · verde = sucesso, vermelho = falhas"
         actions={<Badge tone="info" pulse>live</Badge>}
       />
       {chartData.length < 2 ? (
@@ -115,12 +115,16 @@ function ThroughputChart() {
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
               <defs>
-                <linearGradient id="thr" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="thrOk" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.32} />
                   <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
                 </linearGradient>
+                <linearGradient id="thrBad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--bad)" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="var(--bad)" stopOpacity={0} />
+                </linearGradient>
               </defs>
-              <XAxis dataKey="t" hide />
+              <XAxis dataKey="t" tick={{ fill: 'var(--text-3)', fontSize: 10, fontFamily: 'var(--font-mono)' }} axisLine={false} tickLine={false} />
               <YAxis hide domain={[0, 'dataMax + 2']} />
               <Tooltip
                 cursor={{ stroke: 'var(--border-strong)', strokeDasharray: '3 3' }}
@@ -131,7 +135,8 @@ function ThroughputChart() {
                 labelStyle={{ color: 'var(--text-3)' }}
                 itemStyle={{ color: 'var(--text)' }}
               />
-              <Area type="monotone" dataKey="n" stroke="var(--accent)" strokeWidth={1.8} fill="url(#thr)" isAnimationActive={false} />
+              <Area type="monotone" dataKey="ok" name="sucesso" stroke="var(--accent)" strokeWidth={1.8} fill="url(#thrOk)" isAnimationActive={false} />
+              <Area type="monotone" dataKey="failed" name="falhas" stroke="var(--bad)" strokeWidth={1.5} fill="url(#thrBad)" isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -143,8 +148,10 @@ function ThroughputChart() {
 export default function Overview() {
   const q = useQuery({ queryKey: ['overview'], queryFn: api.overview, refetchInterval: 10_000 });
 
-  return (
-    <div>
+  // Guard ANTES de criar filhos: props como `q.data.stream` são avaliadas
+  // no render do pai — acessar q.data aqui dentro crasha se undefined.
+  if (q.isPending || q.isError || !q.data) {
+    return (
       <QueryState
         query={q}
         skeleton={
@@ -157,18 +164,24 @@ export default function Overview() {
             <div className="skeleton h-[240px]" />
           </div>
         }
-      >
-        <SystemBanner data={q.data} />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-          <Stat label="Stream" value={q.data.stream?.length} icon={ArrowLeftRight} hint={`${q.data.stream?.pending ?? 0} pendentes de ACK`} />
-          <Stat label="Outbox" value={Object.values(q.data.outboxByStatus || {}).reduce((a, b) => a + b, 0)} icon={Inbox} hint="notificações aguardando envio" />
-          <Stat label="DLQ" value={q.data.dlqLength} icon={AlertOctagon} hint={q.data.dlqLength > 0 ? 'requer replay ou investigação' : 'fila morta vazia'} />
-          <Stat label="Alertas" value={q.data.alertsLength} icon={Bell} hint="stream ops:alerts" />
-        </div>
-        <SloRow slo={q.data.slo} />
-        <StatusBreakdown data={q.data} />
-        <ThroughputChart />
-      </QueryState>
+      />
+    );
+  }
+
+  const d = q.data;
+
+  return (
+    <div>
+      <SystemBanner data={d} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <Stat label="Stream" value={d.stream?.length} icon={ArrowLeftRight} hint={`${d.stream?.pending ?? 0} pendentes de ACK`} />
+        <Stat label="Outbox" value={Object.values(d.outboxByStatus || {}).reduce((a, b) => a + b, 0)} icon={Inbox} hint="notificações aguardando envio" />
+        <Stat label="DLQ" value={d.dlqLength} icon={AlertOctagon} hint={d.dlqLength > 0 ? 'requer replay ou investigação' : 'fila morta vazia'} />
+        <Stat label="Alertas" value={d.alertsLength} icon={Bell} hint="stream ops:alerts" />
+      </div>
+      <SloRow slo={d.slo} />
+      <StatusBreakdown data={d} />
+      <ThroughputChart />
     </div>
   );
 }

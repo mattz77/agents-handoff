@@ -57,13 +57,26 @@ function SemanticSearch() {
 export default function BrainPage() {
   const q = useQuery({ queryKey: ['brain'], queryFn: api.brain, refetchInterval: 20_000 });
   const data = q.data || {};
-  const decisions = data.decisions || [];
-  const tasks = data.tasks || data.queue || [];
+  const decisions = data.recentDecisions || [];
+  const tasks = data.taskList || [];
 
   return (
     <div>
       <SemanticSearch />
       <QueryState query={q} skeleton={<div className="skeleton h-64" />}>
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {[
+            { label: 'Pendentes', value: data.pendingTasks, tone: 'text-warn' },
+            { label: 'Em andamento/concluídas', value: data.completedTasks, tone: 'text-ok' },
+            { label: 'Bloqueadas', value: data.blockedTasks, tone: 'text-bad' },
+          ].map((s) => (
+            <div key={s.label} className="card p-4">
+              <p className={cn('data tnum text-[22px] font-semibold leading-none', s.tone)}>{s.value ?? '—'}</p>
+              <p className="text-[10.5px] text-faint uppercase tracking-[0.06em] mt-2">{s.label}</p>
+            </div>
+          ))}
+        </div>
+
         <div className="grid lg:grid-cols-2 gap-4">
           <Spotlight className="card p-5">
             <SectionHeader title="Modelo ativo" sub="quem está dirigindo agora" />
@@ -72,9 +85,10 @@ export default function BrainPage() {
                 <Sparkles size={17} strokeWidth={1.8} />
               </span>
               <div>
-                <p className="text-[15px] font-semibold text-fg">{data.activeModel || data.active_model || '—'}</p>
+                <p className="text-[15px] font-semibold text-fg">{data.activeModel || '—'}</p>
                 <p className="data text-[11px] text-faint mt-0.5">
-                  {data.lastSync || data.last_sync ? `sync ${fmtRelative(data.lastSync || data.last_sync)}` : 'sem sync registrado'}
+                  {data.lastSync ? `sync ${fmtRelative(data.lastSync)}` : 'sem sync registrado'}
+                  {data.hotSizeKB != null && ` · hot ${data.hotSizeKB} KB`}
                 </p>
               </div>
             </div>
@@ -87,14 +101,16 @@ export default function BrainPage() {
           </Spotlight>
 
           <Spotlight className="card p-5">
-            <SectionHeader title="Fila de tarefas" sub={`${tasks.length} pendente(s) ou em andamento`} />
+            <SectionHeader title="Fila de tarefas" sub={`${tasks.length} listada(s)`} />
             {tasks.length === 0 ? <EmptyState icon={ListChecks} title="Fila vazia" /> : (
               <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto -mr-1 pr-1">
                 {tasks.slice(0, 12).map((t, i) => (
                   <div key={t.id || i} className="flex items-center gap-3 p-2.5 rounded-lg border border-line bg-subtle/50">
                     <div className="min-w-0 flex-1">
                       <p className="text-[12.5px] font-medium text-fg truncate">{t.title || t.name || t.id}</p>
-                      {t.assigned && <p className="data text-[10.5px] text-faint mt-0.5">→ {t.assigned}</p>}
+                      <p className="data text-[10.5px] text-faint mt-0.5">
+                        {[t.assigned && `→ ${t.assigned}`, t.priority].filter(Boolean).join(' · ')}
+                      </p>
                     </div>
                     <StatusBadge status={t.status} />
                   </div>
