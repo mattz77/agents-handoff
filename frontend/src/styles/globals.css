@@ -1,0 +1,332 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+   NICEBYTE OPS — DESIGN TOKENS
+   Dark-first dev tool. Linear/Vercel-grade.
+   ============================================================ */
+
+:root {
+  /* — Light theme (secondary) — */
+  --bg: #fafafa;
+  --bg-raised: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-subtle: #f4f4f5;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.06);
+
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+
+  --text: #18181b;
+  --text-2: #52525b;
+  --text-3: #a1a1aa;
+
+  --accent: #4f56c0;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(79, 86, 192, 0.1);
+  --accent-border: rgba(79, 86, 192, 0.35);
+
+  --ok: #0d9e63;
+  --ok-soft: rgba(13, 158, 99, 0.1);
+  --warn: #b87d0a;
+  --warn-soft: rgba(184, 125, 10, 0.1);
+  --bad: #d93a3a;
+  --bad-soft: rgba(217, 58, 58, 0.1);
+  --info: #2563eb;
+  --info-soft: rgba(37, 99, 235, 0.1);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 0 1px var(--border);
+  --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--border);
+  --glow-accent: 0 0 24px rgba(79, 86, 192, 0.25);
+
+  color-scheme: light;
+}
+
+.dark {
+  /* — Dark theme (default, gets the polish) — */
+  --bg: #08080a;
+  --bg-raised: #0e0e11;
+  --bg-overlay: #131318;
+  --bg-subtle: #101014;
+  --bg-hover: rgba(255, 255, 255, 0.045);
+  --bg-active: rgba(255, 255, 255, 0.08);
+
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --text: #f4f4f5;
+  --text-2: #9d9da6;
+  --text-3: #5c5c66;
+
+  --accent: #5e6ad2;
+  --accent-fg: #eef0ff;
+  --accent-soft: rgba(94, 106, 210, 0.14);
+  --accent-border: rgba(94, 106, 210, 0.45);
+
+  --ok: #46c488;
+  --ok-soft: rgba(70, 196, 136, 0.12);
+  --warn: #e5b64f;
+  --warn-soft: rgba(229, 182, 79, 0.12);
+  --bad: #e5534b;
+  --bad-soft: rgba(229, 83, 75, 0.12);
+  --info: #5c9dff;
+  --info-soft: rgba(92, 157, 255, 0.12);
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 16px 48px rgba(0, 0, 0, 0.6);
+  --glow-accent: 0 0 32px rgba(94, 106, 210, 0.35);
+
+  color-scheme: dark;
+}
+
+/* ============================================================
+   TAILWIND THEME MAPPING
+   ============================================================ */
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-raised: var(--bg-raised);
+  --color-overlay: var(--bg-overlay);
+  --color-subtle: var(--bg-subtle);
+  --color-hover: var(--bg-hover);
+  --color-active: var(--bg-active);
+
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  --color-fg: var(--text);
+  --color-muted: var(--text-2);
+  --color-faint: var(--text-3);
+
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-border);
+
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", monospace;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --animate-fade-up: fade-up 0.45s var(--ease-out-expo) both;
+  --animate-fade-in: fade-in 0.3s ease-out both;
+  --animate-shimmer: shimmer 1.8s linear infinite;
+  --animate-pulse-dot: pulse-dot 2s var(--ease-out-expo) infinite;
+  --animate-spin-slow: spin 1.2s linear infinite;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  50% { box-shadow: 0 0 0 4px transparent; opacity: 0.75; }
+}
+
+/* ============================================================
+   BASE
+   ============================================================ */
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01", "ss03";
+    font-size: 13.5px;
+    line-height: 1.55;
+    letter-spacing: -0.006em;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  /* — Scrollbars: thin, quiet — */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: var(--text-3); background-clip: content-box; }
+  *::-webkit-scrollbar-corner, *::-webkit-scrollbar-track { background: transparent; }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ============================================================
+   COMPONENT PRIMITIVES (repetitive patterns only)
+   ============================================================ */
+
+@layer components {
+  /* — Card: layered surface w/ inset highlight — */
+  .card {
+    background: var(--bg-overlay);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-card);
+  }
+
+  /* — Spotlight card: radial glow follows cursor (set --mx/--my via JS) — */
+  .spotlight {
+    position: relative;
+    overflow: hidden;
+  }
+  .spotlight::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      480px circle at var(--mx, 50%) var(--my, 50%),
+      var(--accent-soft),
+      transparent 65%
+    );
+    opacity: 0;
+    transition: opacity 0.35s var(--ease-out-expo);
+    pointer-events: none;
+  }
+  .spotlight:hover::before { opacity: 1; }
+
+  /* — Border glow on hover (cards interativos) — */
+  .card-interactive {
+    transition: border-color 0.2s var(--ease-out-expo), transform 0.2s var(--ease-out-expo), box-shadow 0.25s var(--ease-out-expo);
+    cursor: pointer;
+  }
+  .card-interactive:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-card), var(--glow-accent);
+  }
+  .card-interactive:active { transform: scale(0.995); }
+
+  /* — Keyboard hint — */
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 5px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--text-3);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    line-height: 1.5;
+  }
+
+  /* — Skeleton shimmer — */
+  .skeleton {
+    border-radius: 7px;
+    background: linear-gradient(
+      100deg,
+      var(--bg-subtle) 40%,
+      var(--bg-hover) 50%,
+      var(--bg-subtle) 60%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.8s linear infinite;
+  }
+
+  /* — Status dot w/ pulse — */
+  .status-dot {
+    position: relative;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    flex: none;
+  }
+  .status-dot--pulse::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 999px;
+    border: 1.5px solid currentColor;
+    animation: pulse-dot 2s var(--ease-out-expo) infinite;
+  }
+
+  /* — Dot-grid backdrop (hero/overview) — */
+  .dot-grid {
+    background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1px);
+    background-size: 22px 22px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 30%, transparent 75%);
+  }
+
+  /* — Mono data text — */
+  .data {
+    font-family: var(--font-mono);
+    font-feature-settings: "zero";
+    letter-spacing: -0.02em;
+  }
+
+  /* — Numeric tabular (alinhamento de métricas) — */
+  .tnum { font-variant-numeric: tabular-nums; }
+}
+
+/* ============================================================
+   SONNER TOASTER — theme binding
+   ============================================================ */
+
+@layer base {
+  [data-sonner-toaster] {
+    --normal-bg: var(--bg-overlay);
+    --normal-border: var(--border);
+    --normal-text: var(--text);
+    --success-bg: var(--bg-overlay);
+    --success-border: var(--border);
+    --success-text: var(--text);
+    --error-bg: var(--bg-overlay);
+    --error-border: var(--border);
+    --error-text: var(--text);
+    --border-radius: 10px;
+    font-family: var(--font-sans);
+  }
+}
