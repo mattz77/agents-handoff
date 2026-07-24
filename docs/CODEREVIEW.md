@@ -44,7 +44,7 @@ Corrige falha de CI do PR sem intervenção humana:
 
 ### Guard-rails
 - Máx. `CI_FIX_MAX_ATTEMPTS` (default 2) tentativas por `run_id`.
-- Máx. `CI_FIX_MAX_ATTEMPTS_PER_PR_DAY` (default 4) tentativas por PR em 24h — fecha o ciclo fix→falha→fix, já que cada fix gera um `run_id` novo (o cap por run sozinho não segura loop).
+- Máx. `CI_FIX_MAX_ATTEMPTS_PER_PR_DAY` (default 4) tentativas por PR em 24h — fecha o ciclo fix→falha→fix, já que cada fix gera um `run_id` novo (o cap por run sozinho não segura loop). Janela **rolling**: cada tentativa registra timestamp; conta-se quantas ocorreram nos últimos 24h a partir do momento da nova tentativa (não janela fixa à meia-noite). Assim, 4 tentativas consecutivas após 23h não bypassam o limite — a 5ª só é permitida quando a mais antiga sair da janela de 24h.
 - Tabela `ci_fix_attempts` registra toda tentativa (status, diagnóstico, arquivos tocados, erro).
 
 ## Trigger automático — webhook GitHub (`github-webhook.ts`)
