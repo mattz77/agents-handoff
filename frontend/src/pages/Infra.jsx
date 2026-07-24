@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { cn } from '../lib/cn';
 import { Badge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
-import { SectionHeader, QueryState, EmptyState, Spotlight } from '../components/ui/misc.jsx';
+import { SectionHeader, QueryState, EmptyState, Spotlight, AlertsList } from '../components/ui/misc.jsx';
 import { fmtRelative } from '../lib/format';
 
 function DockerCard() {
@@ -208,6 +208,10 @@ export default function Infra() {
         <SystemCard />
         <GitCard />
         <GithubTokenCard />
+        <Spotlight className="card p-5">
+          <SectionHeader title="Alertas operacionais" sub="stream ops:alerts" />
+          <AlertsList limit={10} />
+        </Spotlight>
       </div>
     </div>
   );

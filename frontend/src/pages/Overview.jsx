@@ -3,15 +3,117 @@ import { useQuery } from '@tanstack/react-query';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   Activity, ArrowLeftRight, Inbox, AlertOctagon, Bell,
-  Zap, Gauge, Timer, CheckCircle2,
+  Zap, Gauge, Timer, CheckCircle2, ListChecks, ShieldAlert, Container, ChevronRight,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Stat } from '../components/ui/stat.jsx';
 import { Badge, StatusBadge } from '../components/ui/badge.jsx';
-import { SectionHeader, QueryState, Spotlight } from '../components/ui/misc.jsx';
+import { SectionHeader, QueryState, Spotlight, EmptyState, AlertsList } from '../components/ui/misc.jsx';
 import { fmtRelative, fmtDuration } from '../lib/format';
 import { useAppStore } from '../store/app';
 import { cn } from '../lib/cn';
+
+function ActionRequired() {
+  const setTab = useAppStore((s) => s.setTab);
+  const brainQ = useQuery({ queryKey: ['brain'], queryFn: api.brain });
+  const dlqQ = useQuery({ queryKey: ['dlq'], queryFn: api.dlq });
+  const codereviewQ = useQuery({ queryKey: ['codereview'], queryFn: api.codereview });
+  const dockerQ = useQuery({ queryKey: ['docker'], queryFn: api.docker });
+
+  const loading = brainQ.isPending || dlqQ.isPending || codereviewQ.isPending || dockerQ.isPending;
+  if (loading) return <div className="skeleton h-[92px] mb-5" />;
+
+  const taskList = brainQ.data?.taskList || [];
+  const pendingTasks = taskList.filter((t) => t.status === 'pending' || t.status === 'in_progress').length;
+
+  const dlqItems = Array.isArray(dlqQ.data) ? dlqQ.data : dlqQ.data?.items || [];
+  const dlqCount = dlqItems.length;
+
+  const reports = codereviewQ.data?.reports || [];
+  const latestByProject = new Map();
+  for (const r of reports) if (!latestByProject.has(r.project_slug)) latestByProject.set(r.project_slug, r);
+  let criticalIssues = 0;
+  for (const r of latestByProject.values()) {
+    const issues = Array.isArray(r.issues) ? r.issues : [];
+    criticalIssues += issues.filter((i) => i.severity === 'critical' || i.severity === 'high').length;
+  }
+
+  const containers = dockerQ.data?.containers || [];
+  const stoppedContainers = containers.filter((c) => (c.state || '').toLowerCase() !== 'running').length;
+
+  const items = [
+    { key: 'tasks', icon: ListChecks, label: 'Tasks pendentes', count: pendingTasks, tone: pendingTasks ? 'warn' : 'ok', onClick: () => setTab('brain') },
+    { key: 'dlq', icon: AlertOctagon, label: 'Handoffs em DLQ', count: dlqCount, tone: dlqCount ? 'bad' : 'ok', onClick: () => setTab('handoffs') },
+    { key: 'review', icon: ShieldAlert, label: 'Issues críticas (review)', count: criticalIssues, tone: criticalIssues ? 'bad' : 'ok', onClick: () => setTab('codereview') },
+    { key: 'infra', icon: Container, label: 'Containers parados', count: stoppedContainers, tone: stoppedContainers ? 'warn' : 'ok', onClick: () => setTab('infra') },
+  ];
+  const active = items.filter((i) => i.count > 0);
+
+  return (
+    <Spotlight className="card p-5 mb-5">
+      <SectionHeader title="Ação necessária" sub={active.length === 0 ? 'tudo em dia' : `${active.length} item(ns) pedindo atenção`} />
+      {active.length === 0 ? (
+        <p className="text-[12.5px] text-muted">Nada pendente no momento.</p>
+      ) : (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {active.map((i) => (
+            <button
+              key={i.key} onClick={i.onClick}
+              className="card-interactive flex items-center gap-3 p-3.5 rounded-lg border border-line bg-subtle text-left"
+            >
+              <span className={cn('w-8 h-8 rounded-lg flex items-center justify-center flex-none',
+                i.tone === 'bad' ? 'bg-bad-soft text-bad' : i.tone === 'warn' ? 'bg-warn-soft text-warn' : 'bg-ok-soft text-ok')}>
+                <i.icon size={15} strokeWidth={1.8} />
+              </span>
+              <div className="min-w-0">
+                <p className="data tnum text-[16px] font-semibold text-fg leading-none">{i.count}</p>
+                <p className="text-[10.5px] text-faint mt-1 truncate">{i.label}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </Spotlight>
+  );
+}
+
+function RecentHandoffs() {
+  const setTab = useAppStore((s) => s.setTab);
+  const q = useQuery({ queryKey: ['handoffs'], queryFn: api.handoffs });
+  const items = Array.isArray(q.data) ? q.data : q.data?.items || [];
+  const recent = items.slice(0, 7);
+  return (
+    <Spotlight className="card p-5">
+      <SectionHeader
+        title="Handoffs recentes"
+        sub={`${recent.length} de ${items.length}`}
+        actions={<button onClick={() => setTab('handoffs')} className="text-[12px] text-accent hover:underline">Ver todos</button>}
+      />
+      <QueryState query={q} skeleton={<div className="skeleton h-48" />}>
+        {recent.length === 0 ? <EmptyState title="Nenhum handoff ainda" /> : (
+          <div className="flex flex-col gap-1">
+            {recent.map((h, i) => (
+              <button
+                key={h.task_id || h.id || i}
+                onClick={() => setTab('handoffs')}
+                className="flex items-center gap-3 px-2.5 py-2 rounded-lg hover:bg-hover transition-colors text-left group"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block data text-[12px] text-fg truncate">{h.hermes_resumo || h.task_id || h.id}</span>
+                  {h.project && <span className="block data text-[10.5px] text-faint truncate">{h.project}{h.branch ? ` · ${h.branch}` : ''}</span>}
+                </span>
+                <span className="data text-[11px] text-muted whitespace-nowrap flex-none">{h.sender || '—'} → {h.receiver || '—'}</span>
+                <StatusBadge status={h.lifecycle_status || h.status} className="flex-none" />
+                <span className="data text-[10.5px] text-faint whitespace-nowrap flex-none">{fmtRelative(h.updated_at || h.created_at)}</span>
+                <ChevronRight size={13} className="text-faint opacity-0 group-hover:opacity-100 transition-opacity flex-none" />
+              </button>
+            ))}
+          </div>
+        )}
+      </QueryState>
+    </Spotlight>
+  );
+}
 
 function SystemBanner({ data }) {
   const healthy = data.dlqLength === 0 && data.openBreakers === 0;
@@ -173,6 +275,7 @@ export default function Overview() {
   return (
     <div>
       <SystemBanner data={d} />
+      <ActionRequired />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <Stat label="Stream" value={d.stream?.length} icon={ArrowLeftRight} hint={`${d.stream?.pending ?? 0} pendentes de ACK`} />
         <Stat label="Outbox" value={Object.values(d.outboxByStatus || {}).reduce((a, b) => a + b, 0)} icon={Inbox} hint="notificações aguardando envio" />
@@ -181,7 +284,14 @@ export default function Overview() {
       </div>
       <SloRow slo={d.slo} />
       <StatusBreakdown data={d} />
-      <ThroughputChart />
+      <div className="grid lg:grid-cols-2 gap-4 mt-5">
+        <ThroughputChart />
+        <RecentHandoffs />
+      </div>
+      <Spotlight className="card p-5 mt-4">
+        <SectionHeader title="Alertas" sub="stream ops:alerts · mais recentes primeiro" />
+        <AlertsList limit={15} />
+      </Spotlight>
     </div>
   );
 }

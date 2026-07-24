@@ -27,7 +27,7 @@ export const api = {
   outbox: () => req('/outbox'),
   outboxStats: () => req('/outbox-stats'),
   dlq: () => req('/dlq'),
-  alerts: () => req('/alerts'),
+  alerts: (limit) => req(`/alerts${limit ? `?limit=${limit}` : ''}`),
   breakers: () => req('/breakers'),
   timeline: () => req('/timeline'),
   replayDlq: (id) => req('/dlq/replay', { method: 'POST', body: JSON.stringify({ id }) }),
@@ -64,6 +64,7 @@ export const api = {
   projects: () => req('/projects'),
   createProject: (p) => req('/projects', { method: 'POST', body: JSON.stringify(p) }),
   updateProject: (slug, p) => req(`/projects/${slug}`, { method: 'PATCH', body: JSON.stringify(p) }),
+  deleteProject: (slug) => req(`/projects/${slug}`, { method: 'DELETE' }),
 
   // System
   docker: () => req('/docker'),

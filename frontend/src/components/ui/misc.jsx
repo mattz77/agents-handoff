@@ -1,7 +1,11 @@
 import React, { useRef } from 'react';
-import { Loader2, AlertTriangle, Inbox } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Loader2, AlertTriangle, Inbox, Bell } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { Button } from './button';
+import { Badge } from './badge';
+import { api } from '../../lib/api';
+import { fmtRelative } from '../../lib/format';
 
 /* Spotlight wrapper — injeta --mx/--my pro glow radial seguir o cursor. */
 export function Spotlight({ className, children, ...props }) {
@@ -68,4 +72,31 @@ export function QueryState({ query, skeleton, children }) {
   if (query.isPending || query.data === undefined) return skeleton || <div className="skeleton h-32 w-full" />;
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   return children;
+}
+
+const ALERT_TONE = { CRITICAL: 'bad', ERROR: 'bad', WARN: 'warn', WARNING: 'warn', INFO: 'info' };
+
+/* Lista de alertas operacionais (stream ops:alerts) — usada em Overview e Infra. */
+export function AlertsList({ limit = 15, className }) {
+  const q = useQuery({ queryKey: ['alerts', limit], queryFn: () => api.alerts(limit), refetchInterval: 20_000 });
+  const items = Array.isArray(q.data) ? q.data : q.data?.items || [];
+  return (
+    <QueryState query={q} skeleton={<div className={cn('skeleton h-32', className)} />}>
+      {items.length === 0 ? (
+        <EmptyState icon={Bell} title="Sem alertas" hint="Nada no stream ops:alerts no momento." className={className} />
+      ) : (
+        <div className={cn('flex flex-col gap-1.5 max-h-[280px] overflow-y-auto -mr-1 pr-1', className)}>
+          {items.slice(0, limit).map((a) => (
+            <div key={a.id} className="flex items-start gap-2.5 px-2.5 py-2 rounded-lg hover:bg-hover transition-colors">
+              <Badge tone={ALERT_TONE[(a.level || '').toUpperCase()] || 'neutral'} dot={false} className="flex-none mt-0.5">
+                {(a.level || '?').toString().slice(0, 8)}
+              </Badge>
+              <span className="text-[12px] text-muted leading-snug flex-1 min-w-0 break-words">{a.msg}</span>
+              <span className="data text-[10px] text-faint flex-none whitespace-nowrap">{fmtRelative(a.at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </QueryState>
+  );
 }

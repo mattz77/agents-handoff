@@ -1,7 +1,7 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { FolderGit2, GitBranch, ShieldCheck, Swords, ExternalLink, Plus, Pencil, X } from 'lucide-react';
+import { FolderGit2, GitBranch, ShieldCheck, Swords, ExternalLink, Plus, Pencil, X, Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Badge } from '../components/ui/badge.jsx';
 import { Button } from '../components/ui/button.jsx';
@@ -91,9 +91,19 @@ function ProjectModal({ open, onClose, project }) {
 }
 
 export default function Projects() {
+  const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ['projects'], queryFn: api.projects, refetchInterval: 30_000 });
   const items = q.data?.projects || (Array.isArray(q.data) ? q.data : []);
   const [modalProject, setModalProject] = React.useState(undefined); // undefined = fechado, null = criar, obj = editar
+
+  const deactivate = useMutation({
+    mutationFn: (slug) => api.deleteProject(slug),
+    onSuccess: (_d, slug) => {
+      toast.success(`${slug} desativado (review desligado)`);
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+    onError: (e) => toast.error(`Falha ao desativar: ${e.message}`),
+  });
 
   return (
     <div>
@@ -125,6 +135,12 @@ export default function Projects() {
                     <div className="flex items-center gap-1.5 flex-none">
                       <button onClick={() => setModalProject(p)} className="text-faint hover:text-accent transition-colors" aria-label="Editar projeto">
                         <Pencil size={13.5} />
+                      </button>
+                      <button
+                        onClick={() => { if (confirm(`Desativar projeto ${p.slug}? (desliga code review, não apaga dados)`)) deactivate.mutate(p.slug); }}
+                        className="text-faint hover:text-bad transition-colors" aria-label="Desativar projeto"
+                      >
+                        <Trash2 size={13.5} />
                       </button>
                       {repoUrl && (
                         <a href={repoUrl} target="_blank" rel="noreferrer" className="text-faint hover:text-accent transition-colors" aria-label="Abrir repo">
