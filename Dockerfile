@@ -19,7 +19,7 @@ FROM node:20-slim AS runner
 
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 # Motor "claude-cli" do Daemon-TaskAgent — headless `claude -p` num clone temporário.
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@1.0.0
 
 WORKDIR /app
 ENV NODE_ENV=production
